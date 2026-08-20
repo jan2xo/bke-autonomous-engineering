@@ -165,6 +165,19 @@ Engineering certification answers whether the software satisfies its requirement
 
 Source control remains the system of record. Disposable certification assets may remain repository-owned without requiring persistent runtime hosts to install or execute them. Owner education about unfamiliar infrastructure remains pull-based and must not become a shipping dependency.
 
+
+## Persistent Remote Source and Disposable Development Compute
+
+Remote access to a persistent or authoritative source host does not mean heavy development belongs on that host. When practical, establish the known base revision, materialize the source into isolated disposable engineering compute, and perform repository-controlled dependency installation, builds, tests, synthetic certification, adversarial work, and repeated fix/test loops there.
+
+The worker must converge the disposable candidate first, then produce the exact tested source delta. Before applying it to the authoritative repository, record and verify the expected base revision and detect concurrent changes. If the authoritative source materially diverged, stop direct patch application and reconcile through normal source-control discipline. Do not blindly overwrite the persistent tree or independently recreate the candidate from instructions.
+
+After applying the verified delta, compare the resulting authoritative source with the tested candidate using an appropriate deterministic mechanism such as diff equivalence, tree/object identity, content hashes, or a manifest comparison. Do not commit or publish the candidate as certified if equivalence fails. Preserve the base revision, ownership boundary, isolated working state, and deterministic delta for each parallel disposable worker; reconcile non-colliding deltas before authoritative mutation.
+
+Protect persistent source/runtime hosts and their capacity, storage, services, databases, caches, runtime data, deployment state, credentials, and availability. Keep development-generated dependencies, caches, temporary state, test artifacts, and certification infrastructure disposable when practical. Source patching and deployment are separate operations: applying a verified source delta does not authorize deployment, production access, production credential/data transfer, or mutation outside an approved repository/worktree boundary. Do not ask the owner to manually reproduce repository-controlled changes that can be materialized and verified autonomously.
+
+Use hosted CI deliberately at the appropriate convergence or certification boundary; do not turn every remote-source patch into repeated full hosted-CI execution.
+
 # 6. Orchestrator Responsibilities
 
 The orchestrator shall:
