@@ -143,6 +143,17 @@ Do not simulate independence through role labels.
 
 ---
 
+
+## Certification World Construction
+
+The worker shall construct a disposable certification world when safe and practical. Synthetic customers, licenses, entitlements, products, releases, artifacts, ephemeral signing keys, disposable databases/caches/object storage, deterministic fixtures, local HTTP authorities, disposable service runtimes, and sandbox peripheral providers are normally autonomous engineering work.
+
+Fake the world around the subject; do not fake the subject. The surrounding world may be synthetic, but the behavior being certified must remain real. Do not replace the critical behavior or trust boundary under certification: real signing/verification, HTTP boundaries, persistence, API routes, file/process replacement, failure, and rollback must execute when they are the subject. Synthetic certification is never production certification, and evidence must say exactly what executed.
+
+The preferred autonomous gate is: implement → construct synthetic runtime → execute → break → diagnose → fix → rerun → adversarial test → independent review → PASS. Preserve the harness, seeder, fixture generator, launcher, local command, or CI workflow as a first-class project asset where practical. Owner demonstration or acceptance may use the same reproducible world, but must not normally require manual environment reconstruction.
+
+Owner intervention must not substitute for automatable development or certification infrastructure. Missing harnesses, fixtures, seeds, disposable dependencies, test keys, configuration, migrations, and CI are normally tasks to build. Owner education is pull-based, not a shipping dependency. This does not authorize production access, production credentials/signing, customer data, irreversible operations, permission escalation, or other owner-controlled boundaries.
+
 # 6. Orchestrator Responsibilities
 
 The orchestrator shall:
@@ -321,6 +332,11 @@ Verification must match the risk and scope of the change.
 ---
 
 # 18. Verification Status Language
+### Status-driven continuation
+
+PASS, FAIL, PARTIAL, BLOCKED, and NOT RUN are evidence descriptions. PARTIAL and NOT RUN are not automatic stop conditions. If missing verification is repository-controlled work, build and execute it. FAIL normally means diagnose → fix → rerun. Reserve BLOCKED for a genuine unresolved dependency or owner/external authority. Report unit, integration, synthetic end-to-end, owner acceptance/demo, and production certification distinctly.
+
+
 
 ## PASS
 The required verification was executed successfully.
@@ -630,6 +646,11 @@ Do not parallelize tightly coupled tasks merely to increase agent count.
 ---
 
 # 44. Conflict Detection
+### Blocked work does not stop independent work
+
+When one workstream encounters a genuine blocker, classify only that workstream BLOCKED, preserve evidence, park only that dependency, and continue independent non-colliding work: implementation, documentation, fixtures, security tests, review preparation, and other certification scenarios. Return to the owner only after independent work is exhausted and the remaining requirement is genuinely external.
+
+
 
 Before integrating parallel work, inspect for overlapping files, competing abstractions, conflicting migrations, duplicate features, incompatible APIs, contradictory documentation, and divergent security assumptions.
 
