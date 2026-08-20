@@ -154,6 +154,17 @@ The preferred autonomous gate is: implement → construct synthetic runtime → 
 
 Owner intervention must not substitute for automatable development or certification infrastructure. Missing harnesses, fixtures, seeds, disposable dependencies, test keys, configuration, migrations, and CI are normally tasks to build. Owner education is pull-based, not a shipping dependency. This does not authorize production access, production credentials/signing, customer data, irreversible operations, permission escalation, or other owner-controlled boundaries.
 
+
+## Technology-Neutral Runtime Interpretation
+
+Autonomous work shall follow the canonical Engineering Standard's technology-neutrality rule. Languages, frameworks, operating systems, hosting providers, reverse proxies, container/runtime tools, CI providers, and agent providers are repository-specific choices unless the requirement expressly makes one part of the subject. Examples in canonical guidance are illustrative, not universal mandates.
+
+Treat the disposable engineering environment and persistent runtime/deployment environment as separate. Build, test, and synthetically certify the real subject in an isolated disposable environment; do not require production-specific infrastructure merely for environmental fidelity. Include a proxy, TLS termination, operating-system service, container runtime, provider, or other infrastructure only when its behavior materially affects the requirement or it is itself being certified. Preserve real trust-boundary execution and the existing “fake the world around the subject; do not fake the subject” rule.
+
+Engineering certification answers whether the software satisfies its requirements. Deployment verification answers whether the identified certified source revision or immutable artifact was correctly installed and wired in the target environment. Do not repeat full engineering certification on the deployment target without a risk-based reason, but do perform applicable startup, dependency, configuration/secrets, health, routing, migration, target-specific integration, and rollback checks. Do not omit required runtime dependencies merely to keep deployment simple.
+
+Source control remains the system of record. Disposable certification assets may remain repository-owned without requiring persistent runtime hosts to install or execute them. Owner education about unfamiliar infrastructure remains pull-based and must not become a shipping dependency.
+
 # 6. Orchestrator Responsibilities
 
 The orchestrator shall:
