@@ -8,6 +8,7 @@
     "worker.ownership",
     "worker.human-auth",
     "ci.intentional-ci",
+    "ci.check-registry",
     "ci.failure-capsule",
     "ci.escalation"
   ],

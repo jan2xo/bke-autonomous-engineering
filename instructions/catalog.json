@@ -7,6 +7,7 @@
     {"id": "worker.ownership", "path": "instructions/worker/ownership.md"},
     {"id": "worker.human-auth", "path": "instructions/worker/human-auth.md"},
     {"id": "ci.intentional-ci", "path": "instructions/ci/intentional-ci.md"},
+    {"id": "ci.check-registry", "path": "instructions/ci/check-registry.md"},
     {"id": "ci.failure-capsule", "path": "instructions/ci/failure-capsule.md"},
     {"id": "ci.escalation", "path": "instructions/ci/escalation.md"}
   ]

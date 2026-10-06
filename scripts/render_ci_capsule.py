@@ -5,7 +5,10 @@ from pathlib import Path
 
 MARKER = "<!-- bke-intent-ci-status -->"
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
-SIGNALS = re.compile(r"(FAILED|ERROR|AssertionError|Error:|error:|Exception|Traceback)", re.IGNORECASE)
+EXCEPTION_CAUSE = re.compile(r"(?:\b[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception):\s*.+|\berror:\s*.+)")
+TEST_LABEL = re.compile(r"^(?:FAIL|ERROR):\s*.+")
+SIGNALS = re.compile(r"(FAILED|ERROR|Exception|Traceback)", re.IGNORECASE)
+GENERIC_SUMMARY = re.compile(r"^(?:FAILED|ERRORS?)\s*\([^)]*\)$", re.IGNORECASE)
 
 
 def compact(text, limit=180):
@@ -19,20 +22,31 @@ def compact(text, limit=180):
 def shortest_actionable_error(log_path):
     if not log_path or not Path(log_path).is_file():
         return "required verification failed; inspect the failing step"
-    lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
-    candidates = []
-    for line in lines[-250:]:
+    lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()[-250:]
+    causal = []
+    labels = []
+    fallback = []
+    for line in lines:
         value = compact(line)
-        if value and SIGNALS.search(value):
-            candidates.append(value)
-    if not candidates:
-        for line in reversed(lines[-80:]):
-            value = compact(line)
-            if value:
-                return value
-        return "required verification failed; inspect the failing step"
-    candidates.sort(key=lambda value: (len(value), value))
-    return candidates[0]
+        if not value or GENERIC_SUMMARY.fullmatch(value) or value.startswith("Traceback ("):
+            continue
+        if EXCEPTION_CAUSE.search(value):
+            causal.append(value)
+        elif TEST_LABEL.search(value):
+            labels.append(value)
+        elif SIGNALS.search(value):
+            fallback.append(value)
+    if causal:
+        return causal[-1]
+    if labels:
+        return labels[-1]
+    if fallback:
+        return fallback[-1]
+    for line in reversed(lines[-80:]):
+        value = compact(line)
+        if value:
+            return value
+    return "required verification failed; inspect the failing step"
 
 
 def render(args):

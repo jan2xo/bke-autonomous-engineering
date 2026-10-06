@@ -30,6 +30,7 @@ Current foundation modules cover:
 - worker ownership;
 - human authorization/security boundaries;
 - intentional CI;
+- versioned certification check resolution;
 - compact PASS/FAIL capsules;
 - progressive evidence escalation.
 
@@ -45,29 +46,62 @@ python3 scripts/resolve_intent.py \
   --bundle-out resolved-instructions.md
 ```
 
-The resolver produces deterministic instruction and certification-plan digests plus an execution key bound to the supplied head.
+The resolver produces a deterministic instruction digest, an effective executable certification graph, a plan digest over that resolved graph, and an execution key bound to the supplied head.
+
+## Upgradeable certification graph
+
+`checks/registry.json` maps stable check IDs to versioned executable definitions and dependencies. Intents continue to declare only required/optional check IDs.
+
+The effective plan is resolved as:
+
+```text
+intent check IDs
+    ↓
+versioned check registry
+    ↓
+resolved dependency graph + executable definitions
+    ↓
+plan digest
+    ↓
+generic graph executor
+```
+
+Unknown declared checks fail closed. A change to the executable meaning of a resolved check changes the plan digest, so old proof cannot silently acquire a new meaning.
+
+The registry begins with one dogfood check, but the contract is intended to grow from one check to multi-platform certification graphs without redesigning the intent format or hard-coding check IDs into workflow logic.
+
+Execute a previously resolved graph with:
+
+```bash
+python3 scripts/run_intent_ci.py \
+  --resolved resolved-intent.json \
+  --result-out intent-ci-result.json \
+  --log-dir .intent-ci
+```
+
+Independent checks may continue after a failure; dependent checks stop when their prerequisites fail according to the declared failure policy. Any non-PASS required check keeps the final result failed.
 
 ## Intent CI contract
 
 The repository dogfoods the library through `.github/workflows/intent-ci.yml`.
 
-The workflow checks out the exact PR head, resolves the declared intent, executes the required contract, and always reaches compact reporting. A failed required check still makes the workflow fail; reporting survival does not convert failure into success.
+The workflow checks out the exact PR head, resolves the declared intent and effective plan, executes that plan through the generic executor, and always reaches compact reporting. Workflow YAML does not separately hard-code which certification check constitutes the plan.
 
 The PR receives one replaceable current-status capsule:
 
 ```text
-❌ FAIL | instruction-library-contract | shortest actionable error | run #1842
+❌ FAIL | failing-check | shortest actionable error | run #1842
 HEAD ... | INTENT ... | INSTR ... | PLAN ...
 ```
 
 or:
 
 ```text
-✅ PASS | instruction-library-contract | resolver + contract tests | run #1843
+✅ PASS | required-plan | 3/3 required checks passed | run #1843
 HEAD ... | INTENT ... | INSTR ... | PLAN ...
 ```
 
-Full logs remain in GitHub Actions. Autonomous actors should use the capsule first and open progressively deeper evidence only when the capsule is insufficient.
+Full per-check logs remain in GitHub Actions. Autonomous actors should use the capsule first and open progressively deeper evidence only when the capsule is insufficient.
 
 ## Intended hierarchy
 
@@ -78,11 +112,11 @@ BKE Autonomous Engineering
         ↓
 Development Repository bootstrap / pinned intent source
         ↓
-Declared intent + resolved instruction bundle
+Declared intent + resolved instructions + effective certification graph
         ↓
 Task + source + tests + exact-head Git evidence
 ```
 
-Development repositories should keep local bootstrap instructions small. Adoption must pin an immutable revision or version of this library so instruction changes cannot silently rewrite old certification meaning.
+Development repositories should keep local bootstrap instructions small. Adoption must pin an immutable revision or version of this library so instruction or execution changes cannot silently rewrite old certification meaning.
 
 Evidence over claims. Repository over conversational memory.
