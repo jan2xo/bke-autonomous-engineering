@@ -1,0 +1,97 @@
+name: Intent CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: intent-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  instruction-library-contract:
+    runs-on: ubuntu-latest
+    env:
+      BKE_INTENT: library-maintenance
+      BKE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BKE_HEAD_SHA }}
+
+      - name: Verify intent library
+        id: verify
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          : > verify.log
+          python3 scripts/resolve_intent.py \
+            --intent "$BKE_INTENT" \
+            --head "$BKE_HEAD_SHA" \
+            --json-out resolved-intent.json \
+            --bundle-out resolved-instructions.md >>verify.log 2>&1
+          rc=$?
+          if [ "$rc" -eq 0 ]; then
+            python3 -m unittest discover -s tests -v >>verify.log 2>&1
+            rc=$?
+          fi
+          cat verify.log
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      - name: Publish compact PR capsule
+        if: always() && github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          RUN_ID: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          instruction_digest="unknown"
+          plan_digest="unknown"
+          if [ -f resolved-intent.json ]; then
+            instruction_digest="$(python3 -c 'import json; print(json.load(open("resolved-intent.json"))["instruction_digest"])')"
+            plan_digest="$(python3 -c 'import json; print(json.load(open("resolved-intent.json"))["plan_digest"])')"
+          fi
+
+          if [ "${{ steps.verify.outcome }}" = "success" ]; then
+            status="PASS"
+          else
+            status="FAIL"
+          fi
+
+          python3 scripts/render_ci_capsule.py \
+            --status "$status" \
+            --check "instruction-library-contract" \
+            --intent "$BKE_INTENT" \
+            --head "$BKE_HEAD_SHA" \
+            --instruction-digest "$instruction_digest" \
+            --plan-digest "$plan_digest" \
+            --run-id "$RUN_ID" \
+            --summary "resolver + contract tests" \
+            --log verify.log > capsule.md
+
+          body="$(cat capsule.md)"
+          marker='<!-- bke-intent-ci-status -->'
+          comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1 || true)"
+
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --raw-field body="$body" >/dev/null
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --raw-field body="$body" >/dev/null
+          fi
+
+      - name: Preserve failing certification result
+        if: always() && steps.verify.outputs.exit_code != '0'
+        shell: bash
+        run: exit 1
