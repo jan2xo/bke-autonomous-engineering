@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bke.local/schemas/autonomous-intent-v1.json",
+  "title": "BKE Autonomous Intent",
+  "type": "object",
+  "required": ["version", "id", "instructions", "certification", "failure_policy"],
+  "properties": {
+    "version": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "instructions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "certification": {
+      "type": "object",
+      "required": ["required", "optional"],
+      "properties": {
+        "required": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "optional": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      },
+      "additionalProperties": false
+    },
+    "failure_policy": {
+      "type": "object",
+      "required": ["independent_checks_continue", "dependent_checks_stop", "always_publish_capsule"],
+      "properties": {
+        "independent_checks_continue": {"type": "boolean"},
+        "dependent_checks_stop": {"type": "boolean"},
+        "always_publish_capsule": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
