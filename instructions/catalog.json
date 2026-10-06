@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "modules": [
+    {"id": "core.github-truth", "path": "instructions/core/github-truth.md"},
+    {"id": "core.pr-ledger", "path": "instructions/core/pr-ledger.md"},
+    {"id": "core.exact-head", "path": "instructions/core/exact-head.md"},
+    {"id": "worker.ownership", "path": "instructions/worker/ownership.md"},
+    {"id": "worker.human-auth", "path": "instructions/worker/human-auth.md"},
+    {"id": "ci.intentional-ci", "path": "instructions/ci/intentional-ci.md"},
+    {"id": "ci.failure-capsule", "path": "instructions/ci/failure-capsule.md"},
+    {"id": "ci.escalation", "path": "instructions/ci/escalation.md"}
+  ]
+}
