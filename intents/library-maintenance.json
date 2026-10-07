@@ -5,6 +5,7 @@
     "core.github-truth",
     "core.pr-ledger",
     "core.exact-head",
+    "core.consumer-contract",
     "worker.ownership",
     "worker.human-auth",
     "ci.intentional-ci",

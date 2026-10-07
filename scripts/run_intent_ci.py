@@ -26,7 +26,18 @@ def write_log(log_path, text):
     log_path.write_text(text, encoding="utf-8", errors="replace")
 
 
-def execute_plan(resolved, log_dir):
+def execution_cwd(check, consumer_root):
+    execution_root = check.get("execution_root", "library")
+    if execution_root == "library":
+        return ROOT
+    if execution_root == "consumer":
+        if consumer_root is None:
+            raise ValueError(f"consumer execution root required for {check['id']}")
+        return Path(consumer_root).resolve()
+    raise ValueError(f"unsupported execution_root for {check['id']}: {execution_root!r}")
+
+
+def execute_plan(resolved, log_dir, consumer_root=None):
     execution_plan = resolved.get("execution_plan")
     if not isinstance(execution_plan, dict):
         raise ValueError("resolved intent has no execution_plan")
@@ -77,11 +88,25 @@ def execute_plan(resolved, log_dir):
                     write_log(log_path, reason + "\n")
                     return_code = None
                 else:
-                    completed = subprocess.run(argv, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                    write_log(log_path, completed.stdout or "")
-                    return_code = completed.returncode
-                    status = "PASS" if return_code == 0 else "FAIL"
-                    reason = None
+                    try:
+                        cwd = execution_cwd(check, consumer_root)
+                    except ValueError as exc:
+                        status = "FAIL"
+                        reason = str(exc)
+                        write_log(log_path, reason + "\n")
+                        return_code = None
+                    else:
+                        completed = subprocess.run(
+                            argv,
+                            cwd=cwd,
+                            text=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                        )
+                        write_log(log_path, completed.stdout or "")
+                        return_code = completed.returncode
+                        status = "PASS" if return_code == 0 else "FAIL"
+                        reason = None
 
         statuses[check_id] = status
         if required and status != "PASS":
@@ -91,6 +116,7 @@ def execute_plan(resolved, log_dir):
             "required": required,
             "status": status,
             "return_code": return_code,
+            "execution_root": check.get("execution_root", "library"),
             "log": str(log_path),
             "reason": reason,
         })
@@ -118,20 +144,35 @@ def execute_plan(resolved, log_dir):
     }
 
 
+def print_check_logs(result):
+    for item in result["checks"]:
+        log_path = Path(item["log"])
+        print(f"::group::BKE check {item['id']} [{item['status']}]")
+        if log_path.is_file():
+            content = log_path.read_text(encoding="utf-8", errors="replace")
+            if content:
+                print(content, end="" if content.endswith("\n") else "\n")
+        if item.get("reason"):
+            print(item["reason"])
+        print("::endgroup::")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Execute a resolved BKE Intent CI certification graph.")
     parser.add_argument("--resolved", required=True)
     parser.add_argument("--result-out", required=True)
     parser.add_argument("--log-dir", required=True)
+    parser.add_argument("--consumer-root")
     args = parser.parse_args()
 
     resolved = json.loads(Path(args.resolved).read_text(encoding="utf-8"))
-    result = execute_plan(resolved, Path(args.log_dir))
+    result = execute_plan(resolved, Path(args.log_dir), consumer_root=args.consumer_root)
     Path(args.result_out).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     for item in result["checks"]:
         print(f"{item['status']} {item['id']} ({'required' if item['required'] else 'optional'})")
     print(result["summary"])
+    print_check_logs(result)
     raise SystemExit(0 if result["status"] == "PASS" else 1)
 
 

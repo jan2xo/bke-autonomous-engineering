@@ -57,10 +57,17 @@ def render(args):
         detail = shortest_actionable_error(args.log)
     run = f"run #{args.run_id}" if args.run_id else "run unavailable"
     line = f"{icon} {args.status} | {args.check} | {detail} | {run}"
-    meta = (
-        f"`HEAD {(args.head or 'unknown')[:12]} | INTENT {args.intent} | "
-        f"INSTR {(args.instruction_digest or 'unknown')[:12]} | PLAN {(args.plan_digest or 'unknown')[:12]}`"
-    )
+    fields = [
+        f"HEAD {(args.head or 'unknown')[:12]}",
+        f"INTENT {args.intent}",
+    ]
+    if args.source_ref:
+        fields.append(f"SRC {args.source_ref[:12]}")
+    fields.extend([
+        f"INSTR {(args.instruction_digest or 'unknown')[:12]}",
+        f"PLAN {(args.plan_digest or 'unknown')[:12]}",
+    ])
+    meta = "`" + " | ".join(fields) + "`"
     return f"{MARKER}\n{line}\n{meta}\n"
 
 
@@ -70,6 +77,7 @@ def main():
     parser.add_argument("--check", required=True)
     parser.add_argument("--intent", required=True)
     parser.add_argument("--head")
+    parser.add_argument("--source-ref")
     parser.add_argument("--instruction-digest")
     parser.add_argument("--plan-digest")
     parser.add_argument("--run-id")

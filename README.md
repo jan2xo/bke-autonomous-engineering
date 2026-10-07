@@ -1,6 +1,6 @@
 # BKE Autonomous Engineering
 
-Reusable autonomous-development governance for BKE software repositories.
+Reusable autonomous-development governance and intent-driven certification runtime for BKE engineering repositories.
 
 ## Authority
 
@@ -10,113 +10,91 @@ Engineering doctrine remains authoritative in:
 
 `jan2xo/bke-engineering-standard`
 
-This repository owns reusable autonomous execution behavior: bounded worker/orchestrator rules, instruction composition, intent-driven CI behavior, compact CI evidence, and context-loss recovery.
+This repository owns reusable autonomous execution behavior: bounded worker/orchestrator rules, instruction composition, intent-driven CI behavior, compact CI evidence, consumer contracts, and context-loss recovery.
 
-## Bootstrap files
+## Versioned instruction and certification runtime
 
-- `AGENTS.md` — intentionally small recovery compass / agent entry point.
-- `AUTONOMOUS-CORE-INSTRUCTION.md` — full worker/orchestrator autonomous operating contract.
-- `CI-VERIFICATION-ECONOMY.md` — tiered verification and deliberate use of metered remote CI.
+`instructions/catalog.json` maps stable shared instruction IDs to small Markdown modules. `checks/registry.json` maps stable shared check IDs to executable definitions and dependencies. Intents name only the instruction/check IDs they need.
 
-## Versioned instruction library
-
-`instructions/catalog.json` maps stable instruction IDs to small Markdown modules. An intent names only the modules and certification graph it needs.
-
-Current foundation modules cover:
-
-- GitHub as durable engineering truth;
-- PR-as-ledger boundaries;
-- exact-head evidence;
-- worker ownership;
-- human authorization/security boundaries;
-- intentional CI;
-- versioned certification check resolution;
-- compact PASS/FAIL capsules;
-- progressive evidence escalation.
-
-Intent declarations live under `intents/`. They are data, not giant copied prompts.
-
-Resolve an intent with:
-
-```bash
-python3 scripts/resolve_intent.py \
-  --intent library-maintenance \
-  --head "$(git rev-parse HEAD)" \
-  --json-out resolved-intent.json \
-  --bundle-out resolved-instructions.md
-```
-
-The resolver produces a deterministic instruction digest, an effective executable certification graph, a plan digest over that resolved graph, and an execution key bound to the supplied head.
-
-## Upgradeable certification graph
-
-`checks/registry.json` maps stable check IDs to versioned executable definitions and dependencies. Intents continue to declare only required/optional check IDs.
-
-The effective plan is resolved as:
+The resolver produces:
 
 ```text
-intent check IDs
-    ↓
-versioned check registry
-    ↓
-resolved dependency graph + executable definitions
-    ↓
-plan digest
-    ↓
-generic graph executor
+exact head
++ resolved instructions
++ effective executable certification graph
++ instruction digest
++ plan digest
++ execution key
 ```
 
-Unknown declared checks fail closed. A change to the executable meaning of a resolved check changes the plan digest, so old proof cannot silently acquire a new meaning.
+Unknown required checks fail closed. A change to executable meaning changes the plan digest, so stale proof cannot silently acquire a new meaning.
 
-The registry begins with one dogfood check, but the contract is intended to grow from one check to multi-platform certification graphs without redesigning the intent format or hard-coding check IDs into workflow logic.
+## Repository-agnostic consumer contract
 
-Execute a previously resolved graph with:
+All BKE engineering repositories can consume the same runtime through an immutable full commit SHA.
 
-```bash
-python3 scripts/run_intent_ci.py \
-  --resolved resolved-intent.json \
-  --result-out intent-ci-result.json \
-  --log-dir .intent-ci
-```
-
-Independent checks may continue after a failure; dependent checks stop when their prerequisites fail according to the declared failure policy. Any non-PASS required check keeps the final result failed.
-
-## Intent CI contract
-
-The repository dogfoods the library through `.github/workflows/intent-ci.yml`.
-
-The workflow checks out the exact PR head, resolves the declared intent and effective plan, executes that plan through the generic executor, and always reaches compact reporting. Workflow YAML does not separately hard-code which certification check constitutes the plan.
-
-The PR receives one replaceable current-status capsule:
+A consumer owns only:
 
 ```text
-❌ FAIL | failing-check | shortest actionable error | run #1842
-HEAD ... | INTENT ... | INSTR ... | PLAN ...
+.bke/autonomous.json
+.bke/intent.json
+.bke/instructions/catalog.json + repo.* modules
+.bke/checks/registry.json + repo.* checks
+tiny workflow calling the pinned composite action
 ```
 
-or:
+Shared IDs cannot be overridden locally. Repository-specific IDs use `repo.*`.
+
+The pinned composite action lives at:
 
 ```text
-✅ PASS | required-plan | 3/3 required checks passed | run #1843
-HEAD ... | INTENT ... | INSTR ... | PLAN ...
+.github/actions/intent-ci/action.yml
 ```
 
-Full per-check logs remain in GitHub Actions. Autonomous actors should use the capsule first and open progressively deeper evidence only when the capsule is insufficient.
+A product repository calls it at the same immutable SHA declared in `.bke/autonomous.json`. The runtime verifies the consumer exact head and the Autonomous Engineering source pin before executing certification.
+
+See `consumer/README.md` for the generic integration contract. It is deliberately not Worker-specific; BKE Worker is only intended as the first proving adopter.
+
+## Certification flow
+
+```text
+GitHub exact head
+      ↓
+declared intent
+      ↓
+shared + repo.* instruction resolution
+      ↓
+shared + repo.* certification graph resolution
+      ↓
+effective PLAN digest
+      ↓
+generic graph execution
+      ↓
+required result aggregation
+   ┌───────┴───────┐
+ PASS             FAIL
+   ↓                ↓
+PASS capsule     FAIL capsule
+   ↓                ↓
+CI green          CI red
+```
+
+Independent checks may continue after another graph branch fails. Dependent checks stop/skip when prerequisites fail. Full per-check output remains in GitHub Actions; PR comments remain compact.
 
 ## Intended hierarchy
 
 ```text
 BKE Engineering Standard
         ↓
-BKE Autonomous Engineering
+BKE Autonomous Engineering @ immutable SHA
         ↓
-Development Repository bootstrap / pinned intent source
+Any BKE engineering repository
         ↓
-Declared intent + resolved instructions + effective certification graph
+repo intent + repo.* adapters
         ↓
-Task + source + tests + exact-head Git evidence
+effective certification graph
+        ↓
+exact-head PASS/FAIL evidence
 ```
 
-Development repositories should keep local bootstrap instructions small. Adoption must pin an immutable revision or version of this library so instruction or execution changes cannot silently rewrite old certification meaning.
-
-Evidence over claims. Repository over conversational memory.
+Development repositories should keep local bootstrap instructions small. Evidence over claims. Repository over conversational memory.
