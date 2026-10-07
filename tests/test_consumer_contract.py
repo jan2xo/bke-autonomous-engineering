@@ -18,11 +18,31 @@ def load_script(name):
 
 
 class ConsumerContractTests(unittest.TestCase):
-    def build_consumer(self, root, source_ref="a" * 40):
+    def git(self, root, *args, capture=False):
+        completed = subprocess.run(
+            ["git", "-C", str(root), *args],
+            text=True,
+            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
+            check=True,
+        )
+        return completed.stdout.strip() if capture else None
+
+    def commit_consumer(self, root, message="fixture"):
+        root = Path(root)
+        if not (root / ".git").exists():
+            self.git(root, "init", "-q")
+            self.git(root, "config", "user.email", "bke-tests@example.invalid")
+            self.git(root, "config", "user.name", "BKE Tests")
+        self.git(root, "add", "-A")
+        self.git(root, "commit", "-q", "-m", message)
+        return self.git(root, "rev-parse", "HEAD", capture=True)
+
+    def build_consumer(self, root, source_ref="a" * 40, product_text="ok"):
         root = Path(root)
         (root / ".bke" / "instructions").mkdir(parents=True)
         (root / ".bke" / "checks").mkdir(parents=True)
-        (root / "product.txt").write_text("ok", encoding="utf-8")
+        (root / "product.txt").write_text(product_text, encoding="utf-8")
         (root / ".bke" / "instructions" / "product.md").write_text(
             "# Product Contract\n\nRepository-specific engineering constraints.\n",
             encoding="utf-8",
@@ -90,12 +110,13 @@ class ConsumerContractTests(unittest.TestCase):
         resolver = load_script("resolve_consumer")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
+            head = self.commit_consumer(tmp)
             result = resolver.resolve_consumer(
                 tmp,
                 ".bke/autonomous.json",
-                "b" * 40,
+                head,
                 library_head="a" * 40,
-                consumer_head_actual="b" * 40,
+                consumer_head_actual=head,
             )
         sources = {item["id"]: item["source"] for item in result["modules"]}
         self.assertEqual(sources["core.github-truth"], "library")
@@ -116,12 +137,13 @@ class ConsumerContractTests(unittest.TestCase):
         runner = load_script("run_intent_ci")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
+            head = self.commit_consumer(tmp)
             result = resolver.resolve_consumer(
                 tmp,
                 ".bke/autonomous.json",
-                "b" * 40,
+                head,
                 library_head="a" * 40,
-                consumer_head_actual="b" * 40,
+                consumer_head_actual=head,
             )
             execution = runner.execute_plan(
                 result,
@@ -136,26 +158,28 @@ class ConsumerContractTests(unittest.TestCase):
         resolver = load_script("resolve_consumer")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
+            head = self.commit_consumer(tmp)
             with self.assertRaisesRegex(ValueError, "instruction source mismatch"):
                 resolver.resolve_consumer(
                     tmp,
                     ".bke/autonomous.json",
-                    "b" * 40,
+                    head,
                     library_head="c" * 40,
-                    consumer_head_actual="b" * 40,
+                    consumer_head_actual=head,
                 )
 
     def test_consumer_checkout_head_mismatch_fails_closed(self):
         resolver = load_script("resolve_consumer")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
+            head = self.commit_consumer(tmp)
             with self.assertRaisesRegex(ValueError, "consumer checkout head mismatch"):
                 resolver.resolve_consumer(
                     tmp,
                     ".bke/autonomous.json",
-                    "b" * 40,
+                    "d" * 40,
                     library_head="a" * 40,
-                    consumer_head_actual="d" * 40,
+                    consumer_head_actual=head,
                 )
 
     def test_consumer_ids_cannot_shadow_shared_namespace(self):
@@ -166,13 +190,14 @@ class ConsumerContractTests(unittest.TestCase):
             registry = json.loads(registry_path.read_text(encoding="utf-8"))
             registry["checks"][0]["id"] = "instruction-library-contract"
             registry_path.write_text(json.dumps(registry), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, r"repo\.\* namespace"):
+            head = self.commit_consumer(tmp, "invalid namespace")
+            with self.assertRaisesRegex(ValueError, "consumer check ids"):
                 resolver.resolve_consumer(
                     tmp,
                     ".bke/autonomous.json",
-                    "b" * 40,
+                    head,
                     library_head="a" * 40,
-                    consumer_head_actual="b" * 40,
+                    consumer_head_actual=head,
                 )
 
     def test_consumer_paths_cannot_escape_repository(self):
@@ -183,14 +208,129 @@ class ConsumerContractTests(unittest.TestCase):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             manifest["intent_path"] = "../outside.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            head = self.commit_consumer(tmp, "invalid path")
             with self.assertRaisesRegex(ValueError, "escapes the consumer repository"):
                 resolver.resolve_consumer(
                     tmp,
                     ".bke/autonomous.json",
-                    "b" * 40,
+                    head,
                     library_head="a" * 40,
-                    consumer_head_actual="b" * 40,
+                    consumer_head_actual=head,
                 )
+
+
+    def test_dirty_tracked_content_is_rejected_before_resolution_including_staged_changes(self):
+        resolver = load_script("resolve_consumer")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_consumer(root)
+            head = self.commit_consumer(root)
+            (root / "product.txt").write_text("dirty", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "consumer resolution tracked files differ from HEAD"):
+                resolver.resolve_consumer(
+                    root,
+                    ".bke/autonomous.json",
+                    head,
+                    library_head="a" * 40,
+                    consumer_head_actual=head,
+                )
+
+            self.git(root, "add", "product.txt")
+            with self.assertRaisesRegex(ValueError, "consumer resolution tracked files differ from HEAD"):
+                resolver.resolve_consumer(
+                    root,
+                    ".bke/autonomous.json",
+                    head,
+                    library_head="a" * 40,
+                    consumer_head_actual=head,
+                )
+
+    def test_dirty_tracked_content_after_resolution_cannot_turn_failure_into_pass(self):
+        resolver = load_script("resolve_consumer")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_consumer(root, product_text="bad")
+            head = self.commit_consumer(root)
+            resolved = resolver.resolve_consumer(
+                root,
+                ".bke/autonomous.json",
+                head,
+                library_head="a" * 40,
+                consumer_head_actual=head,
+            )
+            resolved_path = root / ".bke-resolved.json"
+            result_path = root / ".bke-result.json"
+            resolved_path.write_text(
+                json.dumps({key: value for key, value in resolved.items() if key != "bundle"}),
+                encoding="utf-8",
+            )
+            (root / "product.txt").write_text("ok", encoding="utf-8")
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "run_intent_ci.py"),
+                    "--resolved", str(resolved_path),
+                    "--result-out", str(result_path),
+                    "--log-dir", str(root / ".bke-logs"),
+                    "--consumer-root", str(root),
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("consumer execution tracked files differ from HEAD", completed.stdout)
+            self.assertFalse(result_path.exists())
+
+    def test_generated_untracked_evidence_does_not_make_consumer_dirty(self):
+        resolver = load_script("resolve_consumer")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.build_consumer(root)
+            head = self.commit_consumer(root)
+            evidence = root / ".bke-ci"
+            evidence.mkdir()
+            (evidence / "generated.txt").write_text("evidence", encoding="utf-8")
+            result = resolver.resolve_consumer(
+                root,
+                ".bke/autonomous.json",
+                head,
+                library_head="a" * 40,
+                consumer_head_actual=head,
+            )
+            self.assertEqual(result["head"], head)
+
+    def test_consumer_namespace_runtime_matches_published_schema_pattern(self):
+        resolver = load_script("resolve_consumer")
+        core = resolver.load_core()
+        valid_catalog = {
+            "version": 1,
+            "modules": [{"id": "repo.a", "path": ".bke/instructions/product.md"}],
+        }
+        self.assertIn("repo.a", resolver.validate_consumer_catalog(valid_catalog, core))
+
+        for invalid_id in ("repo.", "repo.-x", "repo..x"):
+            bad_catalog = {
+                "version": 1,
+                "modules": [{"id": invalid_id, "path": ".bke/instructions/product.md"}],
+            }
+            with self.assertRaisesRegex(ValueError, r"repo\.\* namespace"):
+                resolver.validate_consumer_catalog(bad_catalog, core)
+
+            bad_registry = {
+                "version": 1,
+                "checks": [{
+                    "id": invalid_id,
+                    "depends_on": [],
+                    "executor": {"kind": "command", "argv": [sys.executable, "-c", "pass"]},
+                    "stage": "convergence",
+                    "capsule_label": "bad",
+                }],
+            }
+            with self.assertRaisesRegex(ValueError, "consumer check ids must match"):
+                resolver.validate_consumer_registry_shape(bad_registry)
 
     def test_capsule_includes_pinned_source_ref_without_growing_past_two_visible_lines(self):
         with tempfile.TemporaryDirectory() as tmp:

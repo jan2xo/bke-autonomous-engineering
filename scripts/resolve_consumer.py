@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN_RE = re.compile(r"^[0-9a-f]{40}$")
+REPO_ID_RE = re.compile(r"^repo\.[a-z0-9][a-z0-9.-]*$")
 CANONICAL_REPO = "jan2xo/bke-autonomous-engineering"
 
 
@@ -46,6 +47,40 @@ def git_head(root):
         raise ValueError(f"cannot verify Git HEAD for {root}") from exc
 
 
+def tracked_changes(root):
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(Path(root).resolve()),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=no",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        raise ValueError(f"cannot verify tracked consumer content for {root}") from exc
+    if completed.returncode != 0:
+        raise ValueError(
+            f"cannot verify tracked consumer content for {root}: "
+            + (completed.stdout.strip() or f"git exited {completed.returncode}")
+        )
+    return [line for line in completed.stdout.splitlines() if line]
+
+
+def require_tracked_clean(root, boundary):
+    changes = tracked_changes(root)
+    if changes:
+        preview = "; ".join(changes[:3])
+        if len(changes) > 3:
+            preview += f"; +{len(changes) - 3} more"
+        raise ValueError(f"{boundary} tracked files differ from HEAD: {preview}")
+
+
 def validate_manifest(manifest):
     required = {
         "version",
@@ -75,7 +110,7 @@ def validate_manifest(manifest):
 
 def validate_consumer_catalog(catalog, core):
     catalog_by_id = core.validate_catalog(catalog)
-    invalid = [module_id for module_id in catalog_by_id if not module_id.startswith("repo.")]
+    invalid = [module_id for module_id in catalog_by_id if not REPO_ID_RE.fullmatch(module_id)]
     if invalid:
         raise ValueError(f"consumer instruction ids must use repo.* namespace: {', '.join(sorted(invalid))}")
     return catalog_by_id
@@ -91,8 +126,8 @@ def validate_consumer_registry_shape(registry):
         if not isinstance(entry, dict):
             raise ValueError("consumer check registry entries must be objects")
         check_id = entry.get("id")
-        if not isinstance(check_id, str) or not check_id.startswith("repo."):
-            raise ValueError("consumer check ids must use repo.* namespace")
+        if not isinstance(check_id, str) or not REPO_ID_RE.fullmatch(check_id):
+            raise ValueError("consumer check ids must match ^repo\\.[a-z0-9][a-z0-9.-]*$")
         ids.append(check_id)
     if len(ids) != len(set(ids)):
         raise ValueError("consumer check registry contains duplicate ids")
@@ -113,6 +148,7 @@ def resolve_consumer(
         raise ValueError("consumer head must be a full 40-character commit SHA")
     if consumer_head_actual != head:
         raise ValueError(f"consumer checkout head mismatch: expected {head}, got {consumer_head_actual}")
+    require_tracked_clean(consumer_root, "consumer resolution")
 
     manifest_file = safe_child(consumer_root, manifest_path, "manifest path")
     if not manifest_file.is_file():

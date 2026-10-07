@@ -37,6 +37,40 @@ def git_head(root):
         raise ValueError(f"cannot verify Git HEAD for {root}") from exc
 
 
+def tracked_changes(root):
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(Path(root).resolve()),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=no",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        raise ValueError(f"cannot verify tracked consumer content for {root}") from exc
+    if completed.returncode != 0:
+        raise ValueError(
+            f"cannot verify tracked consumer content for {root}: "
+            + (completed.stdout.strip() or f"git exited {completed.returncode}")
+        )
+    return [line for line in completed.stdout.splitlines() if line]
+
+
+def require_tracked_clean(root, boundary):
+    changes = tracked_changes(root)
+    if changes:
+        preview = "; ".join(changes[:3])
+        if len(changes) > 3:
+            preview += f"; +{len(changes) - 3} more"
+        raise ValueError(f"{boundary} tracked files differ from HEAD: {preview}")
+
+
 def verify_resolved_identity(resolved, consumer_root=None):
     execution_plan = resolved.get("execution_plan")
     if not isinstance(execution_plan, dict):
@@ -79,6 +113,7 @@ def verify_resolved_identity(resolved, consumer_root=None):
             raise ValueError(
                 f"consumer execution head mismatch: expected {expected_head}, got {actual_head}"
             )
+        require_tracked_clean(consumer_root, "consumer execution")
 
 
 def execution_cwd(check, consumer_root):
