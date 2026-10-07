@@ -103,6 +103,32 @@ HEAD ... | INTENT ... | INSTR ... | PLAN ...
 
 Full per-check logs remain in GitHub Actions. Autonomous actors should use the capsule first and open progressively deeper evidence only when the capsule is insufficient.
 
+## Repository-agnostic consumer contract
+
+Every BKE engineering repository can consume this public runtime through a full immutable commit SHA while keeping only a small repository-owned `.bke` bootstrap.
+
+```text
+Product PR / exact head
+        ↓
+.bke manifest + intent
+        ↓
+BKE Autonomous Engineering @ immutable SHA
+        ↓
+shared instructions + repo.* instructions
+        ↓
+shared checks + repo.* checks
+        ↓
+effective certification graph
+        ↓
+PASS / FAIL capsule
+```
+
+Shared IDs remain centrally owned; repository-specific instruction and check IDs use the `repo.*` namespace. The effective instruction digest binds shared and repository-specific instruction content, while the effective plan digest binds executable definitions, dependency relationships, execution roots, and failure policy.
+
+The public composite action lives at `.github/actions/intent-ci/action.yml`. Consumer repositories must pin the action and `.bke/autonomous.json` to the same immutable full SHA, never a moving branch.
+
+See `consumer/README.md` for the v1 contract. BKE Worker is the first proving adopter, not a special-case target.
+
 ## Intended hierarchy
 
 ```text

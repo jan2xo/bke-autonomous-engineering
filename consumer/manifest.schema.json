@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bke.local/schemas/autonomous-consumer-manifest-v1.json",
+  "title": "BKE Autonomous Engineering Consumer Manifest",
+  "type": "object",
+  "required": [
+    "version",
+    "instruction_source",
+    "intent_path",
+    "instruction_catalog_path",
+    "check_registry_path"
+  ],
+  "properties": {
+    "version": {"const": 1},
+    "instruction_source": {
+      "type": "object",
+      "required": ["repo", "ref"],
+      "properties": {
+        "repo": {"const": "jan2xo/bke-autonomous-engineering"},
+        "ref": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      },
+      "additionalProperties": false
+    },
+    "intent_path": {"type": "string", "minLength": 1},
+    "instruction_catalog_path": {"type": "string", "minLength": 1},
+    "check_registry_path": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

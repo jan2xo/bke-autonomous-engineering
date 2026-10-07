@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bke.local/schemas/autonomous-consumer-instruction-catalog-v1.json",
+  "title": "BKE Consumer Instruction Catalog",
+  "type": "object",
+  "required": ["version", "modules"],
+  "properties": {
+    "version": {"const": 1},
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "path"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^repo\\.[a-z0-9][a-z0-9.-]*$"},
+          "path": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

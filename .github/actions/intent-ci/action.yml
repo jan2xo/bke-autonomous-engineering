@@ -1,0 +1,171 @@
+name: BKE Intent CI
+description: Resolve and execute a consumer repository against this exact pinned BKE Autonomous Engineering revision.
+
+inputs:
+  head-sha:
+    description: Exact consumer repository head SHA.
+    required: true
+  manifest-path:
+    description: Consumer manifest path relative to the consumer repository root.
+    required: false
+    default: .bke/autonomous.json
+  github-token:
+    description: Optional GitHub token used only to maintain the compact PR capsule.
+    required: false
+    default: ""
+  pr-number:
+    description: Optional pull request number for compact capsule reporting.
+    required: false
+    default: ""
+  run-id:
+    description: Optional workflow run ID shown in the compact capsule.
+    required: false
+    default: ""
+
+outputs:
+  status:
+    description: PASS or FAIL for the required certification graph.
+    value: ${{ steps.meta.outputs.status }}
+  instruction-digest:
+    description: Effective shared plus repository-specific instruction digest.
+    value: ${{ steps.meta.outputs.instruction_digest }}
+  plan-digest:
+    description: Effective shared plus repository-specific execution-plan digest.
+    value: ${{ steps.meta.outputs.plan_digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve and execute pinned intent plan
+      id: verify
+      continue-on-error: true
+      shell: bash
+      env:
+        BKE_ACTION_PATH: ${{ github.action_path }}
+        BKE_ACTION_REF: ${{ github.action_ref }}
+        BKE_HEAD_SHA: ${{ inputs.head-sha }}
+        BKE_MANIFEST: ${{ inputs.manifest-path }}
+      run: |
+        set +e
+        BKE_LIBRARY_ROOT="$(cd "$BKE_ACTION_PATH/../../.." && pwd)"
+        rm -rf .bke-ci
+        mkdir -p .bke-ci
+        : > .bke-ci/verify.log
+
+        python3 "$BKE_LIBRARY_ROOT/scripts/resolve_consumer.py" \
+          --consumer-root "$GITHUB_WORKSPACE" \
+          --manifest "$BKE_MANIFEST" \
+          --head "$BKE_HEAD_SHA" \
+          --library-head "$BKE_ACTION_REF" \
+          --json-out .bke-ci/resolved-intent.json \
+          --bundle-out .bke-ci/resolved-instructions.md >>.bke-ci/verify.log 2>&1
+        rc=$?
+
+        if [ "$rc" -eq 0 ]; then
+          python3 "$BKE_LIBRARY_ROOT/scripts/run_intent_ci.py" \
+            --resolved .bke-ci/resolved-intent.json \
+            --result-out .bke-ci/result.json \
+            --log-dir .bke-ci/checks \
+            --consumer-root "$GITHUB_WORKSPACE" >>.bke-ci/verify.log 2>&1
+          rc=$?
+        fi
+
+        cat .bke-ci/verify.log
+        echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+        exit "$rc"
+
+    - name: Render compact capsule
+      if: ${{ always() }}
+      shell: bash
+      env:
+        BKE_ACTION_PATH: ${{ github.action_path }}
+        BKE_HEAD_SHA: ${{ inputs.head-sha }}
+        BKE_RUN_ID: ${{ inputs.run-id }}
+      run: |
+        set -euo pipefail
+        BKE_LIBRARY_ROOT="$(cd "$BKE_ACTION_PATH/../../.." && pwd)"
+        instruction_digest="unknown"
+        plan_digest="unknown"
+        source_ref="unknown"
+        intent="unknown"
+        check="intent-resolution"
+        summary="consumer intent resolution failed"
+        log_path=".bke-ci/verify.log"
+
+        if [ -f .bke-ci/resolved-intent.json ]; then
+          instruction_digest="$(python3 -c 'import json; print(json.load(open(".bke-ci/resolved-intent.json"))["instruction_digest"])')"
+          plan_digest="$(python3 -c 'import json; print(json.load(open(".bke-ci/resolved-intent.json"))["plan_digest"])')"
+          source_ref="$(python3 -c 'import json; print(json.load(open(".bke-ci/resolved-intent.json"))["source"]["ref"])')"
+          intent="$(python3 -c 'import json; print(json.load(open(".bke-ci/resolved-intent.json"))["intent"])')"
+        fi
+
+        if [ -f .bke-ci/result.json ]; then
+          check="$(python3 -c 'import json; d=json.load(open(".bke-ci/result.json")); print(d.get("failing_check") or "required-plan")')"
+          summary="$(python3 -c 'import json; print(json.load(open(".bke-ci/result.json")).get("summary") or "required plan executed")')"
+          candidate_log="$(python3 -c 'import json; print(json.load(open(".bke-ci/result.json")).get("failing_log") or "")')"
+          if [ -n "$candidate_log" ] && [ -f "$candidate_log" ]; then
+            log_path="$candidate_log"
+          fi
+        fi
+
+        if [ "${{ steps.verify.outcome }}" = "success" ]; then
+          status="PASS"
+        else
+          status="FAIL"
+        fi
+
+        python3 "$BKE_LIBRARY_ROOT/scripts/render_ci_capsule.py" \
+          --status "$status" \
+          --check "$check" \
+          --intent "$intent" \
+          --head "$BKE_HEAD_SHA" \
+          --source-ref "$source_ref" \
+          --instruction-digest "$instruction_digest" \
+          --plan-digest "$plan_digest" \
+          --run-id "$BKE_RUN_ID" \
+          --summary "$summary" \
+          --log "$log_path" > .bke-ci/capsule.md
+
+        cat .bke-ci/capsule.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Publish compact PR capsule
+      if: ${{ always() && inputs.pr-number != '' && inputs.github-token != '' }}
+      shell: bash
+      env:
+        BKE_PR_NUMBER: ${{ inputs.pr-number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        body="$(cat .bke-ci/capsule.md)"
+        marker='<!-- bke-intent-ci-status -->'
+        comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$BKE_PR_NUMBER/comments" --paginate \
+          --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1 || true)"
+        if [ -n "$comment_id" ]; then
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" --raw-field body="$body" >/dev/null
+        else
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$BKE_PR_NUMBER/comments" --raw-field body="$body" >/dev/null
+        fi
+
+    - name: Expose result metadata
+      id: meta
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        status="FAIL"
+        instruction_digest="unknown"
+        plan_digest="unknown"
+        if [ -f .bke-ci/result.json ]; then
+          status="$(python3 -c 'import json; print(json.load(open(".bke-ci/result.json"))["status"])')"
+        fi
+        if [ -f .bke-ci/resolved-intent.json ]; then
+          instruction_digest="$(python3 -c 'import json; print(json.load(open(".bke-ci/resolved-intent.json"))["instruction_digest"])')"
+          plan_digest="$(python3 -c 'import json; print(json.load(open(".bke-ci/resolved-intent.json"))["plan_digest"])')"
+        fi
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+        echo "instruction_digest=$instruction_digest" >> "$GITHUB_OUTPUT"
+        echo "plan_digest=$plan_digest" >> "$GITHUB_OUTPUT"
+
+    - name: Preserve required certification result
+      if: ${{ always() && steps.verify.outputs.exit_code != '0' }}
+      shell: bash
+      run: exit 1
