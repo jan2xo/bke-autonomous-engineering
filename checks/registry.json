@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "checks": [
+    {
+      "id": "instruction-library-contract",
+      "depends_on": [],
+      "executor": {
+        "kind": "command",
+        "argv": ["python3", "-m", "unittest", "discover", "-s", "tests", "-v"]
+      },
+      "stage": "convergence",
+      "capsule_label": "instruction-library-contract"
+    }
+  ]
+}

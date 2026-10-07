@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "id": "library-maintenance",
+  "instructions": [
+    "core.github-truth",
+    "core.pr-ledger",
+    "core.exact-head",
+    "worker.ownership",
+    "worker.human-auth",
+    "ci.intentional-ci",
+    "ci.check-registry",
+    "ci.failure-capsule",
+    "ci.escalation"
+  ],
+  "certification": {
+    "required": ["instruction-library-contract"],
+    "optional": []
+  },
+  "failure_policy": {
+    "independent_checks_continue": true,
+    "dependent_checks_stop": true,
+    "always_publish_capsule": true
+  }
+}
