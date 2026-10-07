@@ -6,6 +6,7 @@
     "core.pr-ledger",
     "core.exact-head",
     "core.consumer-contract",
+    "core.github-app-bridge",
     "worker.ownership",
     "worker.human-auth",
     "ci.intentional-ci",

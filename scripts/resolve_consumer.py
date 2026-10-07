@@ -93,9 +93,30 @@ def validate_consumer_registry_shape(registry):
         check_id = entry.get("id")
         if not isinstance(check_id, str) or not check_id.startswith("repo."):
             raise ValueError("consumer check ids must use repo.* namespace")
+        depends_on = entry.get("depends_on")
+        if not isinstance(depends_on, list):
+            raise ValueError(f"{check_id}.depends_on must be an array")
+        invalid_dependencies = [
+            dep for dep in depends_on
+            if not isinstance(dep, str) or not dep.startswith("repo.")
+        ]
+        if invalid_dependencies:
+            raise ValueError(
+                f"consumer check dependencies must use repo.* namespace: {', '.join(map(str, invalid_dependencies))}"
+            )
         ids.append(check_id)
     if len(ids) != len(set(ids)):
         raise ValueError("consumer check registry contains duplicate ids")
+
+
+def validate_consumer_certification(certification):
+    declared = list(certification["required"]) + list(certification["optional"])
+    invalid = [check_id for check_id in declared if not check_id.startswith("repo.")]
+    if invalid:
+        raise ValueError(
+            "consumer certification may execute only repo.* checks in v1: "
+            + ", ".join(sorted(invalid))
+        )
 
 
 def resolve_consumer(
@@ -146,23 +167,13 @@ def resolve_consumer(
 
     intent = load_json(intent_file)
     core.validate_intent(intent, combined_catalog_by_id)
+    validate_consumer_certification(intent["certification"])
 
-    shared_registry = core.load_json(ROOT / "checks" / "registry.json")
     consumer_registry = load_json(registry_file)
     validate_consumer_registry_shape(consumer_registry)
-    shared_ids = {entry["id"] for entry in shared_registry["checks"]}
-    consumer_ids = {entry["id"] for entry in consumer_registry["checks"]}
-    registry_overlap = shared_ids & consumer_ids
-    if registry_overlap:
-        raise ValueError(f"consumer check ids collide with shared ids: {', '.join(sorted(registry_overlap))}")
-
-    combined_registry = {
-        "version": 1,
-        "checks": list(shared_registry["checks"]) + list(consumer_registry["checks"]),
-    }
-    execution_plan = core.resolve_check_plan(intent["certification"], combined_registry)
+    execution_plan = core.resolve_check_plan(intent["certification"], consumer_registry)
     for check in execution_plan["checks"]:
-        check["execution_root"] = "consumer" if check["id"] in consumer_ids else "library"
+        check["execution_root"] = "consumer"
 
     resolved_modules = []
     digest_material = []

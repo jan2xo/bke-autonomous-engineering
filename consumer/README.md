@@ -1,10 +1,10 @@
 # BKE Autonomous Engineering Consumer Contract v1
 
-Every BKE engineering repository may consume the same Autonomous Engineering runtime without copying the shared instruction library or CI implementation.
+Every BKE engineering repository consumes the same private Autonomous Engineering instruction/certification semantics without copying the central instruction library and without requiring the product repository to read the private source directly.
 
-## Repository-owned files
+## Repository-owned bootstrap
 
-A consumer keeps only small repository-specific declarations under `.bke/`:
+A consumer keeps only small repository-specific declarations:
 
 ```text
 .bke/
@@ -17,9 +17,9 @@ A consumer keeps only small repository-specific declarations under `.bke/`:
     └── registry.json
 ```
 
-Shared instruction/check IDs are owned centrally. Repository-specific IDs use the `repo.*` namespace and cannot override shared IDs.
+Shared instruction IDs remain centrally owned. Repository-specific instruction/check IDs use the `repo.*` namespace.
 
-## Immutable pin
+## Immutable source pin
 
 `.bke/autonomous.json` pins the exact Autonomous Engineering commit:
 
@@ -36,58 +36,66 @@ Shared instruction/check IDs are owned centrally. Repository-specific IDs use th
 }
 ```
 
-v1 deliberately requires a full 40-character commit SHA. Moving branches and floating tags are rejected.
+v1 requires a full lowercase 40-character commit SHA. Moving branches and floating tags are rejected as execution authority.
 
-## Tiny consumer workflow
+## Universal control-plane path
 
-The consumer workflow pins the composite action to the same SHA:
+The canonical path is **not** a direct cross-repository `uses:` dependency on the private source.
 
-```yaml
-name: BKE Intent CI
-
-on:
-  pull_request:
-    branches: [main]
-
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
-
-jobs:
-  intent:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-
-      - uses: jan2xo/bke-autonomous-engineering/.github/actions/intent-ci@0123456789abcdef0123456789abcdef01234567
-        with:
-          head-sha: ${{ github.event.pull_request.head.sha }}
-          pr-number: ${{ github.event.pull_request.number }}
-          run-id: ${{ github.run_id }}
-          github-token: ${{ github.token }}
+```text
+product PR + exact head
+        ↓
+BKE GitHub App
+        ↓
+trusted resolve
+  - validates exact head
+  - loads pinned private instructions
+  - reads .bke declarations as data
+  - executes no product commands
+        ↓
+sanitized resolved plan
+        ↓
+unprivileged execute
+  - fresh environment
+  - no App credential
+  - no OIDC private-source minting
+  - no private instruction checkout
+  - repo.* checks only
+        ↓
+per-check results
+        ↓
+trusted report
+  - no product code execution
+  - App-owned status + compact capsule
 ```
 
-The action verifies that its own pinned action ref equals the SHA declared by the consumer manifest. The consumer checkout HEAD is also verified against the supplied exact head.
+See `consumer/TRUST-MODEL.md`.
 
-## Composition
+## Consumer certification scope
+
+For v1, executable consumer checks and their dependencies must use `repo.*`. This is deliberate trust separation: product-supplied commands execute only in the unprivileged phase.
+
+Shared BKE behavior remains centrally resolved through instruction modules and resolver/executor semantics. Future executor kinds may add separately isolated platform/release certification without weakening this boundary.
+
+## Evidence identity
 
 The effective evidence binds:
 
 ```text
-consumer HEAD
+consumer exact HEAD
 + pinned Autonomous Engineering SHA
-+ shared instruction content
-+ repo.* instruction content
-+ shared check definitions
-+ repo.* check definitions
++ manifest digest
++ shared instruction content hashes
++ repo.* instruction content hashes
++ repo.* executable check definitions
 + dependency graph
-+ execution roots
-= exact execution key + compact PASS/FAIL capsule
+= execution key + compact PASS/FAIL capsule
 ```
 
-Shared checks execute from the Autonomous Engineering action root. `repo.*` checks execute from the consumer repository root.
+The resolved JSON transferred into execution contains metadata/digests and the repo plan, not the private instruction bundle.
 
-This contract is repository-agnostic. BKE Worker, Launcher, Licensing Agent, Digital Solutions, Air Stack, Render Dock, and future repositories can all consume the same protocol while retaining their own toolchains and certification adapters.
+## Repository-agnostic design
+
+BKE Worker is only the first proving adopter. Launcher, Licensing Agent, Digital Solutions, Air Stack, Render Dock, and future BKE repositories use the same manifest and trust protocol while retaining their own `repo.*` toolchain adapters.
+
+The GitHub App/control plane owns enrollment, request authentication, least-privilege repository access, and result publication. Product repositories own implementation and repo-specific certification adapters. Autonomous Engineering owns shared instruction semantics and plan resolution.

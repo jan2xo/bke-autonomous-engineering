@@ -62,7 +62,7 @@ class ConsumerContractTests(unittest.TestCase):
             json.dumps({
                 "version": 1,
                 "id": "product-change",
-                "instructions": ["core.github-truth", "repo.product-contract"],
+                "instructions": ["core.github-truth", "core.github-app-bridge", "repo.product-contract"],
                 "certification": {"required": ["repo.unit"], "optional": []},
                 "failure_policy": {
                     "independent_checks_continue": True,
@@ -86,19 +86,23 @@ class ConsumerContractTests(unittest.TestCase):
             encoding="utf-8",
         )
 
+    def resolve(self, resolver, root):
+        return resolver.resolve_consumer(
+            root,
+            ".bke/autonomous.json",
+            "b" * 40,
+            library_head="a" * 40,
+            consumer_head_actual="b" * 40,
+        )
+
     def test_consumer_resolves_shared_and_repo_layers(self):
         resolver = load_script("resolve_consumer")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
-            result = resolver.resolve_consumer(
-                tmp,
-                ".bke/autonomous.json",
-                "b" * 40,
-                library_head="a" * 40,
-                consumer_head_actual="b" * 40,
-            )
+            result = self.resolve(resolver, tmp)
         sources = {item["id"]: item["source"] for item in result["modules"]}
         self.assertEqual(sources["core.github-truth"], "library")
+        self.assertEqual(sources["core.github-app-bridge"], "library")
         self.assertEqual(sources["repo.product-contract"], "consumer")
         checks = {item["id"]: item for item in result["execution_plan"]["checks"]}
         self.assertEqual(checks["repo.unit"]["execution_root"], "consumer")
@@ -112,21 +116,23 @@ class ConsumerContractTests(unittest.TestCase):
         runner = load_script("run_intent_ci")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
-            result = resolver.resolve_consumer(
-                tmp,
-                ".bke/autonomous.json",
-                "b" * 40,
-                library_head="a" * 40,
-                consumer_head_actual="b" * 40,
-            )
-            execution = runner.execute_plan(
-                result,
-                Path(tmp) / "logs",
-                consumer_root=tmp,
-            )
+            result = self.resolve(resolver, tmp)
+            execution = runner.execute_plan(result, Path(tmp) / "logs", consumer_root=tmp)
             self.assertEqual(execution["status"], "PASS")
             self.assertEqual(execution["checks"][0]["execution_root"], "consumer")
             self.assertIn("consumer-ok", Path(execution["checks"][0]["log"]).read_text(encoding="utf-8"))
+
+    def test_sanitized_json_does_not_contain_private_instruction_text(self):
+        resolver = load_script("resolve_consumer")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_consumer(tmp)
+            result = self.resolve(resolver, tmp)
+            serializable = dict(result)
+            serializable.pop("bundle")
+            encoded = json.dumps(serializable)
+        self.assertNotIn("GitHub App Trust Bridge", encoded)
+        self.assertNotIn("Repository-specific engineering constraints", encoded)
+        self.assertIn("instruction_digest", encoded)
 
     def test_instruction_source_mismatch_fails_closed(self):
         resolver = load_script("resolve_consumer")
@@ -134,11 +140,8 @@ class ConsumerContractTests(unittest.TestCase):
             self.build_consumer(tmp)
             with self.assertRaisesRegex(ValueError, "instruction source mismatch"):
                 resolver.resolve_consumer(
-                    tmp,
-                    ".bke/autonomous.json",
-                    "b" * 40,
-                    library_head="c" * 40,
-                    consumer_head_actual="b" * 40,
+                    tmp, ".bke/autonomous.json", "b" * 40,
+                    library_head="c" * 40, consumer_head_actual="b" * 40,
                 )
 
     def test_consumer_checkout_head_mismatch_fails_closed(self):
@@ -147,14 +150,11 @@ class ConsumerContractTests(unittest.TestCase):
             self.build_consumer(tmp)
             with self.assertRaisesRegex(ValueError, "consumer checkout head mismatch"):
                 resolver.resolve_consumer(
-                    tmp,
-                    ".bke/autonomous.json",
-                    "b" * 40,
-                    library_head="a" * 40,
-                    consumer_head_actual="d" * 40,
+                    tmp, ".bke/autonomous.json", "b" * 40,
+                    library_head="a" * 40, consumer_head_actual="d" * 40,
                 )
 
-    def test_consumer_ids_cannot_shadow_shared_namespace(self):
+    def test_consumer_ids_must_use_repo_namespace(self):
         resolver = load_script("resolve_consumer")
         with tempfile.TemporaryDirectory() as tmp:
             self.build_consumer(tmp)
@@ -162,14 +162,30 @@ class ConsumerContractTests(unittest.TestCase):
             registry = json.loads(registry_path.read_text(encoding="utf-8"))
             registry["checks"][0]["id"] = "instruction-library-contract"
             registry_path.write_text(json.dumps(registry), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "repo.\* namespace"):
-                resolver.resolve_consumer(
-                    tmp,
-                    ".bke/autonomous.json",
-                    "b" * 40,
-                    library_head="a" * 40,
-                    consumer_head_actual="b" * 40,
-                )
+            with self.assertRaisesRegex(ValueError, r"repo\.\* namespace"):
+                self.resolve(resolver, tmp)
+
+    def test_consumer_certification_cannot_execute_shared_check(self):
+        resolver = load_script("resolve_consumer")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_consumer(tmp)
+            intent_path = Path(tmp) / ".bke" / "intent.json"
+            intent = json.loads(intent_path.read_text(encoding="utf-8"))
+            intent["certification"]["required"] = ["instruction-library-contract"]
+            intent_path.write_text(json.dumps(intent), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"only repo\.\* checks"):
+                self.resolve(resolver, tmp)
+
+    def test_consumer_dependencies_cannot_cross_into_private_check_namespace(self):
+        resolver = load_script("resolve_consumer")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.build_consumer(tmp)
+            registry_path = Path(tmp) / ".bke" / "checks" / "registry.json"
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            registry["checks"][0]["depends_on"] = ["instruction-library-contract"]
+            registry_path.write_text(json.dumps(registry), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, r"dependencies must use repo\.\* namespace"):
+                self.resolve(resolver, tmp)
 
     def test_consumer_paths_cannot_escape_repository(self):
         resolver = load_script("resolve_consumer")
@@ -180,13 +196,7 @@ class ConsumerContractTests(unittest.TestCase):
             manifest["intent_path"] = "../outside.json"
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "escapes the consumer repository"):
-                resolver.resolve_consumer(
-                    tmp,
-                    ".bke/autonomous.json",
-                    "b" * 40,
-                    library_head="a" * 40,
-                    consumer_head_actual="b" * 40,
-                )
+                self.resolve(resolver, tmp)
 
     def test_capsule_includes_pinned_source_ref_without_growing_past_two_visible_lines(self):
         with tempfile.TemporaryDirectory() as tmp:

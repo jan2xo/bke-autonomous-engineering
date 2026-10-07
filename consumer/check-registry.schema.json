@@ -16,7 +16,7 @@
           "depends_on": {
             "type": "array",
             "uniqueItems": true,
-            "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*$"}
+            "items": {"type": "string", "pattern": "^repo\\.[a-z0-9][a-z0-9.-]*$"}
           },
           "executor": {
             "type": "object",

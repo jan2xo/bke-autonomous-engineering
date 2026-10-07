@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bke.local/schemas/autonomous-certification-request-v1.json",
+  "title": "BKE Consumer Certification Request",
+  "type": "object",
+  "required": ["version", "repository", "head", "pull_request", "manifest_path"],
+  "properties": {
+    "version": {"const": 1},
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "head": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "pull_request": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "manifest_path": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "additionalProperties": false
+}

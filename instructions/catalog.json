@@ -5,6 +5,7 @@
     {"id": "core.pr-ledger", "path": "instructions/core/pr-ledger.md"},
     {"id": "core.exact-head", "path": "instructions/core/exact-head.md"},
     {"id": "core.consumer-contract", "path": "instructions/core/consumer-contract.md"},
+    {"id": "core.github-app-bridge", "path": "instructions/core/github-app-bridge.md"},
     {"id": "worker.ownership", "path": "instructions/worker/ownership.md"},
     {"id": "worker.human-auth", "path": "instructions/worker/human-auth.md"},
     {"id": "ci.intentional-ci", "path": "instructions/ci/intentional-ci.md"},

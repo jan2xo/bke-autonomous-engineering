@@ -1,6 +1,6 @@
 # BKE Autonomous Engineering
 
-Reusable autonomous-development governance and intent-driven certification runtime for BKE engineering repositories.
+Private reusable autonomous-development governance and intent-driven certification semantics for BKE engineering repositories.
 
 ## Authority
 
@@ -10,65 +10,66 @@ Engineering doctrine remains authoritative in:
 
 `jan2xo/bke-engineering-standard`
 
-This repository owns reusable autonomous execution behavior: bounded worker/orchestrator rules, instruction composition, intent-driven CI behavior, compact CI evidence, consumer contracts, and context-loss recovery.
+This repository owns reusable autonomous execution behavior: bounded worker/orchestrator rules, instruction composition, intent-driven CI semantics, compact evidence, consumer contracts, and context-loss recovery.
 
 ## Versioned instruction and certification runtime
 
-`instructions/catalog.json` maps stable shared instruction IDs to small Markdown modules. `checks/registry.json` maps stable shared check IDs to executable definitions and dependencies. Intents name only the instruction/check IDs they need.
+`instructions/catalog.json` maps stable shared instruction IDs to small Markdown modules. `checks/registry.json` maps checks used by this central repository. Product repositories define their executable adapters under the reserved `repo.*` namespace.
 
-The resolver produces:
+The resolver produces exact-head/source-bound instruction and plan digests plus an execution key. Unknown required checks fail closed. A change in execution meaning changes the plan digest, so stale proof cannot silently acquire a new meaning.
+
+## Universal consumer architecture
+
+All BKE engineering repositories may consume the same private instruction source through an immutable SHA, regardless of whether the product repository itself is public or private.
+
+The product repo does **not** need direct read access to this private repository.
 
 ```text
-exact head
-+ resolved instructions
-+ effective executable certification graph
-+ instruction digest
-+ plan digest
-+ execution key
+Product PR / exact head
+        ↓
+BKE GitHub App
+        ↓
+TRUSTED RESOLVE
+private pinned instructions + .bke declarations as data
+        ↓
+sanitized resolved plan
+        ↓
+UNPRIVILEGED EXECUTE
+repo.* checks; no App token / no private source
+        ↓
+results
+        ↓
+TRUSTED REPORT
+App-owned PASS/FAIL status + compact capsule
 ```
 
-Unknown required checks fail closed. A change to executable meaning changes the plan digest, so stale proof cannot silently acquire a new meaning.
+This split prevents PR-controlled code from receiving a credential capable of reading private engineering instructions.
 
-## Repository-agnostic consumer contract
-
-All BKE engineering repositories can consume the same runtime through an immutable full commit SHA.
-
-A consumer owns only:
+Consumer repositories keep only:
 
 ```text
 .bke/autonomous.json
 .bke/intent.json
 .bke/instructions/catalog.json + repo.* modules
 .bke/checks/registry.json + repo.* checks
-tiny workflow calling the pinned composite action
 ```
 
-Shared IDs cannot be overridden locally. Repository-specific IDs use `repo.*`.
-
-The pinned composite action lives at:
-
-```text
-.github/actions/intent-ci/action.yml
-```
-
-A product repository calls it at the same immutable SHA declared in `.bke/autonomous.json`. The runtime verifies the consumer exact head and the Autonomous Engineering source pin before executing certification.
-
-See `consumer/README.md` for the generic integration contract. It is deliberately not Worker-specific; BKE Worker is only intended as the first proving adopter.
+See `consumer/README.md` and `consumer/TRUST-MODEL.md`.
 
 ## Certification flow
 
 ```text
-GitHub exact head
+exact consumer HEAD
       ↓
 declared intent
       ↓
 shared + repo.* instruction resolution
       ↓
-shared + repo.* certification graph resolution
+repo.* certification graph resolution
       ↓
 effective PLAN digest
       ↓
-generic graph execution
+isolated execution
       ↓
 required result aggregation
    ┌───────┴───────┐
@@ -76,10 +77,10 @@ required result aggregation
    ↓                ↓
 PASS capsule     FAIL capsule
    ↓                ↓
-CI green          CI red
+green evidence    red evidence
 ```
 
-Independent checks may continue after another graph branch fails. Dependent checks stop/skip when prerequisites fail. Full per-check output remains in GitHub Actions; PR comments remain compact.
+Independent repo checks may continue after another graph branch fails. Dependent checks stop/skip when prerequisites fail. Full per-check output stays in CI evidence; actor-facing capsules remain compact.
 
 ## Intended hierarchy
 
@@ -88,13 +89,13 @@ BKE Engineering Standard
         ↓
 BKE Autonomous Engineering @ immutable SHA
         ↓
-Any BKE engineering repository
+BKE GitHub App / control plane
+        ↓
+Any enrolled BKE engineering repository
         ↓
 repo intent + repo.* adapters
-        ↓
-effective certification graph
         ↓
 exact-head PASS/FAIL evidence
 ```
 
-Development repositories should keep local bootstrap instructions small. Evidence over claims. Repository over conversational memory.
+BKE Worker is the first proving adopter, not a special-case target. Evidence over claims. Repository over conversational memory.
