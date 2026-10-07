@@ -10,11 +10,11 @@ inputs:
     required: false
     default: .bke/autonomous.json
   github-token:
-    description: Optional GitHub token used only by the reporting step to maintain the compact PR capsule.
+    description: Optional GitHub token used only by the publishing step to maintain the compact PR capsule.
     required: false
     default: ""
   pr-number:
-    description: Optional pull request number for compact capsule reporting.
+    description: Optional pull request number for compact capsule publishing.
     required: false
     default: ""
   run-id:
@@ -74,15 +74,13 @@ runs:
         echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
         exit "$rc"
 
-    - name: Publish compact PR capsule
-      if: ${{ always() && inputs.pr-number != '' && inputs.github-token != '' }}
+    - name: Render compact capsule
+      if: ${{ always() }}
       shell: bash
       env:
         BKE_ACTION_PATH: ${{ github.action_path }}
         BKE_HEAD_SHA: ${{ inputs.head-sha }}
-        BKE_PR_NUMBER: ${{ inputs.pr-number }}
         BKE_RUN_ID: ${{ inputs.run-id }}
-        GH_TOKEN: ${{ inputs.github-token }}
       run: |
         set -euo pipefail
         BKE_LIBRARY_ROOT="$(cd "$BKE_ACTION_PATH/../../.." && pwd)"
@@ -128,6 +126,16 @@ runs:
           --summary "$summary" \
           --log "$log_path" > .bke-ci/capsule.md
 
+        cat .bke-ci/capsule.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Publish compact PR capsule
+      if: ${{ always() && inputs.pr-number != '' && inputs.github-token != '' }}
+      shell: bash
+      env:
+        BKE_PR_NUMBER: ${{ inputs.pr-number }}
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
         body="$(cat .bke-ci/capsule.md)"
         marker='<!-- bke-intent-ci-status -->'
         comment_id="$(gh api "repos/$GITHUB_REPOSITORY/issues/$BKE_PR_NUMBER/comments" --paginate \
