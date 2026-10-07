@@ -25,7 +25,7 @@ It exists specifically to support:
 
 This document does **not** weaken the BKE Engineering Standard.
 
-Where this document and the adopted Engineering Standard appear to conflict, the Engineering Standard governs unless this document is explicitly updated to reconcile the rule.
+Where this document, a product requirement, roadmap item, repository-local instruction, or orchestration rule appears to conflict with mandatory doctrine in the adopted Engineering Standard, the Engineering Standard governs. Lower-layer updates may clarify or conform to that doctrine, but they cannot create an implicit exception to it.
 
 ---
 
@@ -86,13 +86,19 @@ Autonomous speed is encouraged. Fabricated certainty is prohibited.
 
 ## Requirement Authority
 
-For determining what **should be built**:
+For determining what **should be built**, first preserve mandatory doctrine and protected authority boundaries from the adopted BKE Engineering Standard.
 
-1. explicitly approved requirements;
+Within that governing doctrine, apply:
+
+1. explicitly approved product requirements;
 2. current roadmap acceptance criteria;
 3. approved architecture;
-4. adopted BKE Engineering Standard;
-5. repository-specific contracts and documentation.
+4. repository-specific contracts and documentation;
+5. the pinned Autonomous Engineering execution protocol for reusable execution mechanics.
+
+Approved product requirements define product intent within the Standard; they do not silently waive mandatory security, evidence, independent-review, operations, recovery, release, signing, production, or owner-control requirements.
+
+The Autonomous Engineering protocol determines how applicable work is resolved, executed, evidenced, and recovered. It is not an independent source of permission to override governing doctrine.
 
 Runtime behavior does not automatically override an approved requirement. Existing code may itself be wrong.
 
