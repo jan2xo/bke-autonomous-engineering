@@ -26,7 +26,70 @@ def write_log(log_path, text):
     log_path.write_text(text, encoding="utf-8", errors="replace")
 
 
-def execute_plan(resolved, log_dir):
+def git_head(root):
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.STDOUT,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError(f"cannot verify Git HEAD for {root}") from exc
+
+
+def verify_resolved_identity(resolved, consumer_root=None):
+    execution_plan = resolved.get("execution_plan")
+    if not isinstance(execution_plan, dict):
+        raise ValueError("resolved intent has no execution_plan")
+    if digest(execution_plan) != resolved.get("plan_digest"):
+        raise ValueError("resolved plan digest mismatch")
+
+    if "source" in resolved:
+        source = resolved.get("source")
+        if not isinstance(source, dict) or not source.get("ref"):
+            raise ValueError("consumer resolved source missing")
+        expected_key = digest({
+            "head": resolved.get("head"),
+            "intent": resolved.get("intent"),
+            "source_ref": source.get("ref"),
+            "manifest_digest": resolved.get("manifest_digest"),
+            "instruction_digest": resolved.get("instruction_digest"),
+            "plan_digest": resolved.get("plan_digest"),
+        })
+    else:
+        expected_key = digest({
+            "head": resolved.get("head") or "",
+            "intent": resolved.get("intent"),
+            "instruction_digest": resolved.get("instruction_digest"),
+            "plan_digest": resolved.get("plan_digest"),
+        })
+
+    if expected_key != resolved.get("execution_key"):
+        raise ValueError("resolved execution key mismatch")
+
+    if consumer_root is not None:
+        expected_head = resolved.get("head")
+        if not isinstance(expected_head, str) or not expected_head:
+            raise ValueError("consumer resolved head missing")
+        actual_head = git_head(Path(consumer_root).resolve())
+        if actual_head != expected_head:
+            raise ValueError(
+                f"consumer execution head mismatch: expected {expected_head}, got {actual_head}"
+            )
+
+
+def execution_cwd(check, consumer_root):
+    execution_root = check.get("execution_root", "library")
+    if execution_root == "library":
+        return ROOT
+    if execution_root == "consumer":
+        if consumer_root is None:
+            raise ValueError(f"consumer execution root required for {check['id']}")
+        return Path(consumer_root).resolve()
+    raise ValueError(f"unsupported execution_root for {check['id']}: {execution_root!r}")
+
+
+def execute_plan(resolved, log_dir, consumer_root=None):
     execution_plan = resolved.get("execution_plan")
     if not isinstance(execution_plan, dict):
         raise ValueError("resolved intent has no execution_plan")
@@ -82,14 +145,15 @@ def execute_plan(resolved, log_dir):
                     return_code = None
                 else:
                     try:
+                        cwd = execution_cwd(check, consumer_root)
                         completed = subprocess.run(
                             argv,
-                            cwd=ROOT,
+                            cwd=cwd,
                             text=True,
                             stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT,
                         )
-                    except OSError as exc:
+                    except (OSError, ValueError) as exc:
                         status = "FAIL"
                         reason = f"{type(exc).__name__}: {exc}"
                         write_log(log_path, reason + "\n")
@@ -108,6 +172,7 @@ def execute_plan(resolved, log_dir):
             "required": required,
             "status": status,
             "return_code": return_code,
+            "execution_root": check.get("execution_root", "library"),
             "log": str(log_path),
             "reason": reason,
         })
@@ -151,10 +216,12 @@ def main():
     parser.add_argument("--resolved", required=True)
     parser.add_argument("--result-out", required=True)
     parser.add_argument("--log-dir", required=True)
+    parser.add_argument("--consumer-root")
     args = parser.parse_args()
 
     resolved = json.loads(Path(args.resolved).read_text(encoding="utf-8"))
-    result = execute_plan(resolved, Path(args.log_dir))
+    verify_resolved_identity(resolved, consumer_root=args.consumer_root)
+    result = execute_plan(resolved, Path(args.log_dir), consumer_root=args.consumer_root)
     Path(args.result_out).write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     for item in result["checks"]:
