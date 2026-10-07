@@ -10,6 +10,16 @@
       },
       "stage": "convergence",
       "capsule_label": "instruction-library-contract"
+    },
+    {
+      "id": "control-plane-broker-contract",
+      "depends_on": [],
+      "executor": {
+        "kind": "command",
+        "argv": ["node", "--test", "control-plane/cloudflare-broker/tests/contracts.test.mjs"]
+      },
+      "stage": "convergence",
+      "capsule_label": "control-plane-broker-contract"
     }
   ]
 }

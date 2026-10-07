@@ -15,7 +15,10 @@
     "ci.escalation"
   ],
   "certification": {
-    "required": ["instruction-library-contract"],
+    "required": [
+      "instruction-library-contract",
+      "control-plane-broker-contract"
+    ],
     "optional": []
   },
   "failure_policy": {
