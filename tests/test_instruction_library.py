@@ -8,6 +8,11 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_POLICY = {
+    "independent_checks_continue": True,
+    "dependent_checks_stop": True,
+    "always_publish_capsule": True,
+}
 
 
 def load_script(name):
@@ -46,6 +51,7 @@ class InstructionLibraryContractTests(unittest.TestCase):
             self.assertEqual(result["intent"], intent["id"])
             self.assertTrue(result["instruction_digest"])
             self.assertEqual(result["plan_digest"], resolver.digest(result["execution_plan"]))
+            self.assertEqual(result["execution_plan"]["failure_policy"], intent["failure_policy"])
             plan_ids = {item["id"] for item in result["execution_plan"]["checks"]}
             self.assertTrue(set(intent["certification"]["required"]).issubset(plan_ids))
 
@@ -65,17 +71,17 @@ class InstructionLibraryContractTests(unittest.TestCase):
         resolver = load_script("resolve_intent")
         registry = json.loads((ROOT / "checks" / "registry.json").read_text(encoding="utf-8"))
         certification = {"required": ["instruction-library-contract"], "optional": []}
-        original = resolver.resolve_check_plan(certification, registry)
+        original = resolver.resolve_check_plan(certification, registry, DEFAULT_POLICY)
         changed_registry = copy.deepcopy(registry)
         changed_registry["checks"][0]["executor"]["argv"].append("--failfast")
-        changed = resolver.resolve_check_plan(certification, changed_registry)
+        changed = resolver.resolve_check_plan(certification, changed_registry, DEFAULT_POLICY)
         self.assertNotEqual(resolver.digest(original), resolver.digest(changed))
 
     def test_unknown_required_check_fails_closed(self):
         resolver = load_script("resolve_intent")
         registry = json.loads((ROOT / "checks" / "registry.json").read_text(encoding="utf-8"))
         with self.assertRaisesRegex(ValueError, "unknown certification check"):
-            resolver.resolve_check_plan({"required": ["not-registered"], "optional": []}, registry)
+            resolver.resolve_check_plan({"required": ["not-registered"], "optional": []}, registry, DEFAULT_POLICY)
 
     def test_runtime_validation_matches_schema_level_constraints(self):
         resolver = load_script("resolve_intent")
@@ -116,14 +122,11 @@ class InstructionLibraryContractTests(unittest.TestCase):
                 },
             ],
         }
+        plan["failure_policy"] = dict(DEFAULT_POLICY)
         resolved = {
             "execution_plan": plan,
             "plan_digest": runner.digest(plan),
-            "failure_policy": {
-                "independent_checks_continue": True,
-                "dependent_checks_stop": True,
-                "always_publish_capsule": True,
-            },
+            "failure_policy": dict(DEFAULT_POLICY),
         }
         with tempfile.TemporaryDirectory() as tmp:
             result = runner.execute_plan(resolved, Path(tmp))
@@ -131,6 +134,160 @@ class InstructionLibraryContractTests(unittest.TestCase):
         self.assertEqual(statuses, {"fails": "FAIL", "independent": "PASS", "dependent": "SKIP"})
         self.assertEqual(result["status"], "FAIL")
         self.assertEqual(result["failing_check"], "fails")
+
+
+    def test_policy_changes_plan_digest_and_execution_key(self):
+        resolver = load_script("resolve_intent")
+        registry = json.loads((ROOT / "checks" / "registry.json").read_text(encoding="utf-8"))
+        certification = {"required": ["instruction-library-contract"], "optional": []}
+        continue_policy = dict(DEFAULT_POLICY)
+        stop_policy = dict(DEFAULT_POLICY)
+        stop_policy["independent_checks_continue"] = False
+
+        continue_plan = resolver.resolve_check_plan(certification, registry, continue_policy)
+        stop_plan = resolver.resolve_check_plan(certification, registry, stop_policy)
+        continue_digest = resolver.digest(continue_plan)
+        stop_digest = resolver.digest(stop_plan)
+
+        self.assertNotEqual(continue_digest, stop_digest)
+        self.assertNotEqual(
+            resolver.make_execution_key("head", "intent", "instructions", continue_digest),
+            resolver.make_execution_key("head", "intent", "instructions", stop_digest),
+        )
+
+    def test_policy_tampering_after_resolution_is_rejected(self):
+        runner = load_script("run_intent_ci")
+        plan = {
+            "registry_version": 1,
+            "declared": {"required": ["ok"], "optional": []},
+            "failure_policy": dict(DEFAULT_POLICY),
+            "checks": [
+                {
+                    "id": "ok",
+                    "required": True,
+                    "depends_on": [],
+                    "stage": "convergence",
+                    "capsule_label": "ok",
+                    "executor": {"kind": "command", "argv": [sys.executable, "-c", "print('ok')"]},
+                }
+            ],
+        }
+        resolved = {
+            "execution_plan": plan,
+            "plan_digest": runner.digest(plan),
+            "failure_policy": dict(DEFAULT_POLICY),
+        }
+        resolved["failure_policy"]["independent_checks_continue"] = False
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "failure policy"):
+                runner.execute_plan(resolved, Path(tmp))
+
+    def test_missing_executable_is_check_failure_and_result_is_written(self):
+        runner = load_script("run_intent_ci")
+        missing = "__bke_definitely_missing_executable__"
+        plan = {
+            "registry_version": 1,
+            "declared": {"required": ["missing", "independent", "dependent"], "optional": []},
+            "failure_policy": dict(DEFAULT_POLICY),
+            "checks": [
+                {
+                    "id": "missing",
+                    "required": True,
+                    "depends_on": [],
+                    "stage": "convergence",
+                    "capsule_label": "missing",
+                    "executor": {"kind": "command", "argv": [missing]},
+                },
+                {
+                    "id": "independent",
+                    "required": True,
+                    "depends_on": [],
+                    "stage": "convergence",
+                    "capsule_label": "independent",
+                    "executor": {"kind": "command", "argv": [sys.executable, "-c", "print('independent-ok')"]},
+                },
+                {
+                    "id": "dependent",
+                    "required": True,
+                    "depends_on": ["missing"],
+                    "stage": "convergence",
+                    "capsule_label": "dependent",
+                    "executor": {"kind": "command", "argv": [sys.executable, "-c", "print('must-not-run')"]},
+                },
+            ],
+        }
+        resolved = {
+            "execution_plan": plan,
+            "plan_digest": runner.digest(plan),
+            "failure_policy": dict(DEFAULT_POLICY),
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            resolved_path = tmp / "resolved.json"
+            result_path = tmp / "result.json"
+            logs = tmp / "logs"
+            resolved_path.write_text(json.dumps(resolved), encoding="utf-8")
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "run_intent_ci.py"),
+                    "--resolved", str(resolved_path),
+                    "--result-out", str(result_path),
+                    "--log-dir", str(logs),
+                ],
+                cwd=ROOT,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            self.assertEqual(completed.returncode, 1)
+            self.assertTrue(result_path.is_file())
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            statuses = {item["id"]: item["status"] for item in result["checks"]}
+            self.assertEqual(statuses, {"missing": "FAIL", "independent": "PASS", "dependent": "SKIP"})
+            self.assertIn("FileNotFoundError", (logs / "missing.log").read_text(encoding="utf-8"))
+            self.assertIn("independent-ok", completed.stdout)
+
+    def test_registry_allows_repeated_executor_arguments(self):
+        resolver = load_script("resolve_intent")
+        registry = {
+            "version": 1,
+            "checks": [
+                {
+                    "id": "repeat-args",
+                    "depends_on": [],
+                    "executor": {
+                        "kind": "command",
+                        "argv": [
+                            sys.executable,
+                            "-c",
+                            "import sys; assert sys.argv[1:] == ['same', 'same']",
+                            "same",
+                            "same",
+                        ],
+                    },
+                    "stage": "convergence",
+                    "capsule_label": "repeat-args",
+                }
+            ],
+        }
+        checks = resolver.validate_check_registry(registry)
+        self.assertEqual(checks["repeat-args"]["executor"]["argv"][-2:], ["same", "same"])
+        plan = resolver.resolve_check_plan(
+            {"required": ["repeat-args"], "optional": []},
+            registry,
+            DEFAULT_POLICY,
+        )
+        runner = load_script("run_intent_ci")
+        resolved = {
+            "execution_plan": plan,
+            "plan_digest": runner.digest(plan),
+            "failure_policy": dict(DEFAULT_POLICY),
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            result = runner.execute_plan(resolved, Path(tmp))
+        self.assertEqual(result["status"], "PASS")
 
     def test_capsule_prefers_causal_error_over_generic_suite_summary(self):
         with tempfile.TemporaryDirectory() as tmp:

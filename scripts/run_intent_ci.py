@@ -36,7 +36,11 @@ def execute_plan(resolved, log_dir):
     checks = execution_plan.get("checks")
     if not isinstance(checks, list):
         raise ValueError("execution_plan.checks must be an array")
-    policy = resolved.get("failure_policy", {})
+    policy = execution_plan.get("failure_policy")
+    if not isinstance(policy, dict):
+        raise ValueError("execution_plan.failure_policy must be an object")
+    if resolved.get("failure_policy") != policy:
+        raise ValueError("resolved failure policy does not match digested execution plan")
     dependent_checks_stop = policy.get("dependent_checks_stop") is True
     independent_checks_continue = policy.get("independent_checks_continue") is True
 
@@ -77,11 +81,24 @@ def execute_plan(resolved, log_dir):
                     write_log(log_path, reason + "\n")
                     return_code = None
                 else:
-                    completed = subprocess.run(argv, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                    write_log(log_path, completed.stdout or "")
-                    return_code = completed.returncode
-                    status = "PASS" if return_code == 0 else "FAIL"
-                    reason = None
+                    try:
+                        completed = subprocess.run(
+                            argv,
+                            cwd=ROOT,
+                            text=True,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                        )
+                    except OSError as exc:
+                        status = "FAIL"
+                        reason = f"{type(exc).__name__}: {exc}"
+                        write_log(log_path, reason + "\n")
+                        return_code = None
+                    else:
+                        write_log(log_path, completed.stdout or "")
+                        return_code = completed.returncode
+                        status = "PASS" if return_code == 0 else "FAIL"
+                        reason = None
 
         statuses[check_id] = status
         if required and status != "PASS":
@@ -118,6 +135,17 @@ def execute_plan(resolved, log_dir):
     }
 
 
+def print_check_logs(result):
+    for item in result["checks"]:
+        log_path = Path(item["log"])
+        print(f"::group::BKE check {item['id']} [{item['status']}]")
+        if log_path.is_file():
+            content = log_path.read_text(encoding="utf-8", errors="replace")
+            if content:
+                print(content, end="" if content.endswith("\n") else "\n")
+        print("::endgroup::")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Execute a resolved BKE Intent CI certification graph.")
     parser.add_argument("--resolved", required=True)
@@ -132,6 +160,7 @@ def main():
     for item in result["checks"]:
         print(f"{item['status']} {item['id']} ({'required' if item['required'] else 'optional'})")
     print(result["summary"])
+    print_check_logs(result)
     raise SystemExit(0 if result["status"] == "PASS" else 1)
 
 

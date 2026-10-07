@@ -26,14 +26,23 @@ def load_json(path):
         return json.load(handle)
 
 
-def validate_string_list(value, name, *, allow_empty=True, pattern=None):
+def make_execution_key(head, intent_id, instruction_digest, plan_digest):
+    return digest({
+        "head": head or "",
+        "intent": intent_id,
+        "instruction_digest": instruction_digest,
+        "plan_digest": plan_digest,
+    })
+
+
+def validate_string_list(value, name, *, allow_empty=True, pattern=None, unique=True):
     if not isinstance(value, list):
         raise ValueError(f"{name} must be an array")
     if not allow_empty and not value:
         raise ValueError(f"{name} must be non-empty")
     if any(not isinstance(item, str) or not item for item in value):
         raise ValueError(f"{name} must contain non-empty strings")
-    if len(value) != len(set(value)):
+    if unique and len(value) != len(set(value)):
         raise ValueError(f"{name} must contain unique values")
     if pattern:
         invalid = [item for item in value if not pattern.fullmatch(item)]
@@ -66,6 +75,14 @@ def validate_catalog(catalog):
     return {entry["id"]: entry for entry in catalog["modules"]}
 
 
+def validate_failure_policy(policy):
+    policy_keys = {"independent_checks_continue", "dependent_checks_stop", "always_publish_capsule"}
+    if not isinstance(policy, dict) or set(policy) != policy_keys:
+        raise ValueError("invalid failure_policy keys")
+    if not all(isinstance(policy[key], bool) for key in policy_keys):
+        raise ValueError("failure_policy values must be boolean")
+
+
 def validate_intent(intent, catalog_by_id):
     required_keys = {"version", "id", "instructions", "certification", "failure_policy"}
     if not isinstance(intent, dict) or set(intent) != required_keys:
@@ -89,12 +106,7 @@ def validate_intent(intent, catalog_by_id):
     if overlap:
         raise ValueError(f"checks cannot be both required and optional: {', '.join(sorted(overlap))}")
 
-    policy = intent["failure_policy"]
-    policy_keys = {"independent_checks_continue", "dependent_checks_stop", "always_publish_capsule"}
-    if not isinstance(policy, dict) or set(policy) != policy_keys:
-        raise ValueError("invalid failure_policy keys")
-    if not all(isinstance(policy[key], bool) for key in policy_keys):
-        raise ValueError("failure_policy values must be boolean")
+    validate_failure_policy(intent["failure_policy"])
 
 
 def validate_check_registry(registry):
@@ -127,7 +139,7 @@ def validate_check_registry(registry):
             raise ValueError(f"invalid executor for {check_id}")
         if executor["kind"] != "command":
             raise ValueError(f"unsupported executor kind for {check_id}: {executor['kind']!r}")
-        validate_string_list(executor["argv"], f"{check_id}.executor.argv", allow_empty=False)
+        validate_string_list(executor["argv"], f"{check_id}.executor.argv", allow_empty=False, unique=False)
         checks_by_id[check_id] = entry
 
     for check_id, entry in checks_by_id.items():
@@ -137,7 +149,8 @@ def validate_check_registry(registry):
     return checks_by_id
 
 
-def resolve_check_plan(certification, registry):
+def resolve_check_plan(certification, registry, failure_policy):
+    validate_failure_policy(failure_policy)
     checks_by_id = validate_check_registry(registry)
     roots = list(certification["required"]) + list(certification["optional"])
     unknown = [check_id for check_id in roots if check_id not in checks_by_id]
@@ -193,6 +206,7 @@ def resolve_check_plan(certification, registry):
             "required": list(certification["required"]),
             "optional": list(certification["optional"]),
         },
+        "failure_policy": dict(failure_policy),
         "checks": resolved_checks,
     }
 
@@ -210,7 +224,7 @@ def resolve(intent_id, head=None):
     validate_intent(intent, catalog_by_id)
 
     registry = load_json(CHECK_REGISTRY_PATH)
-    execution_plan = resolve_check_plan(intent["certification"], registry)
+    execution_plan = resolve_check_plan(intent["certification"], registry, intent["failure_policy"])
 
     resolved_modules = []
     bundle_parts = [f"# BKE Resolved Instruction Bundle\n\nIntent: `{intent_id}`\n"]
@@ -234,12 +248,7 @@ def resolve(intent_id, head=None):
         "head": head,
         "instruction_digest": instruction_digest,
         "plan_digest": plan_digest,
-        "execution_key": digest({
-            "head": head or "",
-            "intent": intent_id,
-            "instruction_digest": instruction_digest,
-            "plan_digest": plan_digest,
-        }),
+        "execution_key": make_execution_key(head, intent_id, instruction_digest, plan_digest),
         "modules": resolved_modules,
         "certification": intent["certification"],
         "execution_plan": execution_plan,
