@@ -1,0 +1,374 @@
+name: BKE Consumer Certification
+
+on:
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: Enrolled BKE consumer repository in owner/name form.
+        required: true
+        type: string
+      head:
+        description: Exact consumer commit SHA.
+        required: true
+        type: string
+      pull_request:
+        description: Consumer pull request number.
+        required: true
+        type: string
+      manifest_path:
+        description: Consumer manifest path.
+        required: true
+        default: .bke/autonomous.json
+        type: string
+
+concurrency:
+  group: bke-consumer-cert-${{ inputs.repository }}-${{ inputs.pull_request }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  resolve:
+    name: Trusted resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      source_ref: ${{ steps.meta.outputs.source_ref }}
+      instruction_digest: ${{ steps.meta.outputs.instruction_digest }}
+      plan_digest: ${{ steps.meta.outputs.plan_digest }}
+      execution_key: ${{ steps.meta.outputs.execution_key }}
+    steps:
+      - name: Checkout trusted control plane
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate certification request
+        run: |
+          python3 scripts/validate_certification_request.py \
+            --repository "${{ inputs.repository }}" \
+            --head "${{ inputs.head }}" \
+            --pull-request "${{ inputs.pull_request }}" \
+            --manifest-path "${{ inputs.manifest_path }}" \
+            --json-out request.json
+
+      - name: Mint read-only consumer token
+        id: consumer-token
+        shell: bash
+        env:
+          BROKER_URL: ${{ vars.BKE_ENGINEERING_GITHUB_APP_BROKER_URL }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          test -n "${BROKER_URL:-}" || {
+            echo "BKE consumer certification FAIL-CLOSED: broker URL is not configured" >&2
+            exit 3
+          }
+
+          audience="bke-engineering-github-app-broker"
+          encoded_audience="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$audience")"
+          separator="?"
+          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *"?"* ]] && separator="&"
+          oidc_json="$(curl --fail --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}${separator}audience=${encoded_audience}")"
+          oidc_token="$(OIDC_JSON="$oidc_json" python3 -c 'import json, os; p=json.loads(os.environ["OIDC_JSON"]); print(p["value"])')"
+
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --request POST \
+            -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            --data "$(python3 -c 'import json, os; print(json.dumps({"repository": os.environ["TARGET_REPOSITORY"], "purpose": "resolve"}))')" \
+            "${BROKER_URL%/}/github/app/repository-token")"
+          broker_json="$(cat "$response_file")"
+          [[ "$status" =~ ^2[0-9][0-9]$ ]] || {
+            error="$(BROKER_JSON="$broker_json" python3 -c 'import json, os; print(json.loads(os.environ.get("BROKER_JSON") or "{}").get("error") or "BROKER_FAILED")')"
+            echo "BKE consumer certification FAIL-CLOSED: broker status=$status error=$error" >&2
+            exit 22
+          }
+          token="$(BROKER_JSON="$broker_json" python3 -c 'import json, os; print(json.loads(os.environ["BROKER_JSON"])["token"])')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout exact consumer head as data
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repository }}
+          ref: ${{ inputs.head }}
+          token: ${{ steps.consumer-token.outputs.token }}
+          path: consumer
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Read immutable instruction source
+        id: source
+        shell: bash
+        env:
+          MANIFEST_PATH: ${{ inputs.manifest_path }}
+        run: |
+          set -euo pipefail
+          source_ref="$(python3 -c 'import json, os; p=json.load(open("consumer/" + os.environ["MANIFEST_PATH"])); print(p["instruction_source"]["ref"])')"
+          [[ "$source_ref" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "BKE consumer certification FAIL-CLOSED: invalid source pin" >&2
+            exit 2
+          }
+          echo "ref=$source_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout pinned private Autonomous Engineering source
+        uses: actions/checkout@v4
+        with:
+          repository: jan2xo/bke-autonomous-engineering
+          ref: ${{ steps.source.outputs.ref }}
+          path: engine
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve private instructions and sanitized repo plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p handoff
+          python3 engine/scripts/resolve_consumer.py \
+            --consumer-root consumer \
+            --manifest "${{ inputs.manifest_path }}" \
+            --head "${{ inputs.head }}" \
+            --library-head "${{ steps.source.outputs.ref }}" \
+            --json-out handoff/resolved-intent.json
+          cp engine/scripts/run_intent_ci.py handoff/run_intent_ci.py
+          cp engine/scripts/render_ci_capsule.py handoff/render_ci_capsule.py
+          tar -C consumer -cf handoff/consumer-source.tar .
+          printf '%s\n' "${{ inputs.head }}" > handoff/consumer-head.txt
+
+      - name: Expose resolved evidence identity
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          p=json.load(open("handoff/resolved-intent.json"))
+          print("source_ref=" + p["source"]["ref"])
+          print("instruction_digest=" + p["instruction_digest"])
+          print("plan_digest=" + p["plan_digest"])
+          print("execution_key=" + p["execution_key"])
+          PY
+
+      - name: Upload sanitized execution handoff
+        uses: actions/upload-artifact@v4
+        with:
+          name: bke-consumer-plan
+          path: handoff/
+          if-no-files-found: error
+          retention-days: 1
+
+  execute:
+    name: Unprivileged execute
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Download sanitized execution handoff
+        uses: actions/download-artifact@v4
+        with:
+          name: bke-consumer-plan
+          path: handoff
+
+      - name: Restore exact consumer snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir consumer
+          tar -C consumer -xf handoff/consumer-source.tar
+          test "$(git -C consumer rev-parse HEAD)" = "${{ inputs.head }}"
+
+      - name: Execute repo certification graph
+        id: verify
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          python3 handoff/run_intent_ci.py \
+            --resolved handoff/resolved-intent.json \
+            --result-out execution-result.json \
+            --log-dir execution-logs \
+            --consumer-root consumer
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      - name: Upload execution evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bke-consumer-result
+          path: |
+            execution-result.json
+            execution-logs/
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Preserve required certification result
+        if: always() && steps.verify.outputs.exit_code != '0'
+        shell: bash
+        run: exit 1
+
+  report:
+    name: Trusted report
+    if: always()
+    needs: [resolve, execute]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download resolved plan
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: bke-consumer-plan
+          path: handoff
+
+      - name: Download execution result
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: bke-consumer-result
+          path: result
+
+      - name: Build compact result capsule
+        id: capsule
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+          HEAD_SHA: ${{ inputs.head }}
+        run: |
+          set -euo pipefail
+          status="FAIL"
+          check="intent-resolution"
+          intent="unknown"
+          source_ref="unknown"
+          instruction_digest="unknown"
+          plan_digest="unknown"
+          summary="trusted control-plane resolution failed"
+          log_path=""
+
+          if [ -f handoff/resolved-intent.json ]; then
+            intent="$(python3 -c 'import json; print(json.load(open("handoff/resolved-intent.json"))["intent"])')"
+            source_ref="$(python3 -c 'import json; print(json.load(open("handoff/resolved-intent.json"))["source"]["ref"])')"
+            instruction_digest="$(python3 -c 'import json; print(json.load(open("handoff/resolved-intent.json"))["instruction_digest"])')"
+            plan_digest="$(python3 -c 'import json; print(json.load(open("handoff/resolved-intent.json"))["plan_digest"])')"
+            check="execution"
+            summary="consumer execution did not produce a valid result"
+          fi
+
+          if [ -f result/execution-result.json ]; then
+            status="$(python3 -c 'import json; print(json.load(open("result/execution-result.json"))["status"])')"
+            check="$(python3 -c 'import json; d=json.load(open("result/execution-result.json")); print(d.get("failing_check") or "required-plan")')"
+            summary="$(python3 -c 'import json; print(json.load(open("result/execution-result.json")).get("summary") or "required plan executed")')"
+            candidate="$(python3 -c 'import json; print(json.load(open("result/execution-result.json")).get("failing_log") or "")')"
+            if [ -n "$candidate" ] && [ -f "result/$candidate" ]; then
+              log_path="result/$candidate"
+            fi
+          fi
+
+          if [ -x handoff/render_ci_capsule.py ] || [ -f handoff/render_ci_capsule.py ]; then
+            python3 handoff/render_ci_capsule.py \
+              --status "$status" \
+              --check "$check" \
+              --intent "$intent" \
+              --head "$HEAD_SHA" \
+              --source-ref "$source_ref" \
+              --instruction-digest "$instruction_digest" \
+              --plan-digest "$plan_digest" \
+              --run-id "$RUN_ID" \
+              --summary "$summary" \
+              ${log_path:+--log "$log_path"} > capsule.md
+          else
+            icon="❌"
+            [ "$status" = "PASS" ] && icon="✅"
+            {
+              echo '<!-- bke-intent-ci-status -->'
+              echo "$icon $status | $check | $summary | run #$RUN_ID"
+              echo "`HEAD ${HEAD_SHA:0:12} | INTENT $intent | SRC ${source_ref:0:12} | INSTR ${instruction_digest:0:12} | PLAN ${plan_digest:0:12}`"
+            } > capsule.md
+          fi
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat capsule.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Mint report token
+        id: report-token
+        shell: bash
+        env:
+          BROKER_URL: ${{ vars.BKE_ENGINEERING_GITHUB_APP_BROKER_URL }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          set -euo pipefail
+          test -n "${BROKER_URL:-}" || {
+            echo "BKE report FAIL-CLOSED: broker URL is not configured" >&2
+            exit 3
+          }
+          audience="bke-engineering-github-app-broker"
+          encoded_audience="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$audience")"
+          separator="?"
+          [[ "$ACTIONS_ID_TOKEN_REQUEST_URL" == *"?"* ]] && separator="&"
+          oidc_json="$(curl --fail --silent --show-error \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}${separator}audience=${encoded_audience}")"
+          oidc_token="$(OIDC_JSON="$oidc_json" python3 -c 'import json, os; print(json.loads(os.environ["OIDC_JSON"])["value"])')"
+          response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          status="$(curl --silent --show-error --output "$response_file" --write-out '%{http_code}' \
+            --request POST \
+            -H "Authorization: Bearer $oidc_token" \
+            -H "Content-Type: application/json" \
+            --data "$(python3 -c 'import json, os; print(json.dumps({"repository": os.environ["TARGET_REPOSITORY"], "purpose": "report"}))')" \
+            "${BROKER_URL%/}/github/app/repository-token")"
+          broker_json="$(cat "$response_file")"
+          [[ "$status" =~ ^2[0-9][0-9]$ ]] || {
+            error="$(BROKER_JSON="$broker_json" python3 -c 'import json, os; print(json.loads(os.environ.get("BROKER_JSON") or "{}").get("error") or "BROKER_FAILED")')"
+            echo "BKE report FAIL-CLOSED: broker status=$status error=$error" >&2
+            exit 22
+          }
+          token="$(BROKER_JSON="$broker_json" python3 -c 'import json, os; print(json.loads(os.environ["BROKER_JSON"])["token"])')"
+          echo "::add-mask::$token"
+          echo "token=$token" >> "$GITHUB_OUTPUT"
+
+      - name: Publish product PR capsule and check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.report-token.outputs.token }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          PR_NUMBER: ${{ inputs.pull_request }}
+          HEAD_SHA: ${{ inputs.head }}
+          STATUS: ${{ steps.capsule.outputs.status }}
+        run: |
+          set -euo pipefail
+          body="$(cat capsule.md)"
+          marker='<!-- bke-intent-ci-status -->'
+          comment_id="$(gh api "repos/$TARGET_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | contains(\"$marker\")) | .id" | head -n 1 || true)"
+          if [ -n "$comment_id" ]; then
+            gh api --method PATCH "repos/$TARGET_REPOSITORY/issues/comments/$comment_id" \
+              --raw-field body="$body" >/dev/null
+          else
+            gh api --method POST "repos/$TARGET_REPOSITORY/issues/$PR_NUMBER/comments" \
+              --raw-field body="$body" >/dev/null
+          fi
+
+          conclusion="failure"
+          [ "$STATUS" = "PASS" ] && conclusion="success"
+          gh api --method POST "repos/$TARGET_REPOSITORY/check-runs" \
+            -H "Accept: application/vnd.github+json" \
+            -f name="BKE Intent CI" \
+            -f head_sha="$HEAD_SHA" \
+            -f status="completed" \
+            -f conclusion="$conclusion" \
+            -f "output[title]=BKE Intent CI $STATUS" \
+            -f "output[summary]=$body" >/dev/null
