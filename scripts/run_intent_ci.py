@@ -56,18 +56,21 @@ def verify_resolved_identity(resolved, consumer_root=None):
             "instruction_digest": resolved.get("instruction_digest"),
             "plan_digest": resolved.get("plan_digest"),
         })
-    else:
+        if expected_key != resolved.get("execution_key"):
+            raise ValueError("resolved execution key mismatch")
+    elif resolved.get("execution_key") is not None:
         expected_key = digest({
             "head": resolved.get("head") or "",
             "intent": resolved.get("intent"),
             "instruction_digest": resolved.get("instruction_digest"),
             "plan_digest": resolved.get("plan_digest"),
         })
-
-    if expected_key != resolved.get("execution_key"):
-        raise ValueError("resolved execution key mismatch")
+        if expected_key != resolved.get("execution_key"):
+            raise ValueError("resolved execution key mismatch")
 
     if consumer_root is not None:
+        if "source" not in resolved:
+            raise ValueError("consumer execution requires a source-bound resolved artifact")
         expected_head = resolved.get("head")
         if not isinstance(expected_head, str) or not expected_head:
             raise ValueError("consumer resolved head missing")
